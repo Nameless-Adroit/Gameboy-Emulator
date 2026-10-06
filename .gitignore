@@ -1,0 +1,7 @@
+.vscode/
+lessons/
+roms/
+build/
+*.o
+*.sav
+.DS_Store
