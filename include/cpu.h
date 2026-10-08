@@ -8,7 +8,8 @@
 typedef enum {
     CPU_RUNNING,
     CPU_HALTED,
-    CPU_STOPPED
+    CPU_STOPPED,
+    CPU_LOCKED // Illegal opcode: only reset can resume execution
 } CPUStates;
 
 typedef struct {
@@ -16,6 +17,12 @@ typedef struct {
     uint16_t SP;
     uint16_t PC;
     CPUStates state;
+    bool ime;             // Global interrupt master enable, separate from IE.
+    uint8_t ime_delay;     // EI takes effect after the following instruction.
+    bool halt_bug;        // Suppress exactly one opcode-fetch PC increment.
+    unsigned cycles;      // T-cycles consumed by the most recent step.
+    uint64_t total_cycles;
+
 } CPU;
 
 typedef enum {
@@ -49,6 +56,10 @@ bool get_flag(CPU *cpu, CPUFlag flag);
 
 void push_word(CPU *cpu, Memory *memory, uint16_t value);
 uint16_t pop_word(CPU *cpu, Memory *memory);
-void      cpu_step(CPU *cpu, Memory *memory);
+// Returns T-cycles (4 per machine cycle). STOP returns 0 until explicit wake.
+// Instruction-level timing only; memory accesses are not individually clocked.
+unsigned cpu_step(CPU *cpu, Memory *memory);
+void cpu_wake_stop(CPU *cpu); // Joypad/peripheral integration calls this.
+
 
 #endif

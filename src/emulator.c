@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
         
         // Optional: Add a debug print here to watch instructions execute, 
         // but be careful, it will flood your terminal quickly!
-        // printf("PC: 0x%04X, A: %02X, F: %02X\n", cpu.PC, cpu.A, cpu.F);
+        printf("PC: 0x%04X, A: %02X, F: %02X\n", cpu.PC, cpu.A, cpu.F);
     }
 
     return 0;

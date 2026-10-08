@@ -49,6 +49,15 @@ bool load_rom(Memory *memory, const char *filename) {
         return false;
     }
 
+     // Reject banked ROMs instead of silently pretending the first 32 KiB is all
+    // of the cartridge. MBC support needs a separate cartridge/bus abstraction.
+    int extra = fgetc(file);
+    if (extra != EOF || ferror(file)) {
+        fprintf(stderr, "ROM exceeds the flat 32 KiB loader (MBC not implemented): %s\n", filename);
+        fclose(file);
+        return false;
+    }
+
     printf("Loaded %zu bytes from %s\n", bytes_read, filename);
     fclose(file);
     return true;

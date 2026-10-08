@@ -1,0 +1,13 @@
+0100: 3E 05       LD A,$05
+0102: 06 02       LD B,$02
+0104: C5          PUSH BC
+0105: 06 09       LD B,$09
+0107: C1          POP BC
+0108: CD 00 02    CALL $0200
+010B: 90          SUB B
+010C: D6 01       SUB $01
+010E: 10          sentinel / intentionally unimplemented
+
+0200: 3C          INC A
+0201: 3C          INC A
+0202: C9          RET
