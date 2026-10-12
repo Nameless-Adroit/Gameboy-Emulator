@@ -1,0 +1,35 @@
+Loaded 32768 bytes from tests/gb-test-roms/cpu_instrs/individual/01-special.gb
+Starting CPU Loop...
+
+01-special
+
+
+Passed
+
+--- Blargg test status ---
+Status: 0xFF
+Signature: FF FF FF
+No valid Blargg result signature found.
+
+--- CPU state ---
+PC=C7D2 SP=DFFF A=00 F=C0
+
+--- Memory near PC ---
+C7CA: C3
+C7CB: CD
+C7CC: D4
+C7CD: C7
+C7CE: 3E
+C7CF: 00
+C7D0: E0
+C7D1: 26
+C7D2: 18
+C7D3: FE
+C7D4: C9
+C7D5: 00
+C7D6: 00
+C7D7: 00
+C7D8: 00
+C7D9: 00
+C7DA: 00
+CPU halted at PC: 0xC7D2

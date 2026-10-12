@@ -360,6 +360,7 @@ static uint16_t add_sp_offset(CPU *cpu, uint8_t offset)
     return (uint16_t)((int)sp + signed_byte(offset));
 }
 
+//DAA: Decimal Adjust Accumulator. The SM83 does not have a dedicated BCD mode.
 static void daa(CPU *cpu)
 {
     unsigned correction = 0;

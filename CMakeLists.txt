@@ -95,6 +95,8 @@ endif()
 add_library(gbcore STATIC
     src/cpu.c
     src/memory.c
+    src/cartridge.c
+    src/timer.c
 )
 
 # Headers accessible to applications and tests.
@@ -119,6 +121,14 @@ target_link_libraries(gb PRIVATE gbcore)
 # ------------------------------------------------------------
 
 if(BUILD_TESTING)
+
+    add_executable(timer_tests tests/test_timer.c)
+    target_link_libraries(timer_tests PRIVATE gbcore)
+    add_test(NAME Timer_Tests COMMAND timer_tests)
+
+    add_executable(cartridge_tests tests/test_cartridge.c)
+    target_link_libraries(cartridge_tests PRIVATE gbcore)
+    add_test(NAME Cartridge_Tests COMMAND cartridge_tests)
 
     add_executable(cpu_tests
         tests/test_cpu.c
