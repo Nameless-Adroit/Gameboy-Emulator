@@ -6,7 +6,9 @@
 #include <stdbool.h>
 
 typedef struct {
-    uint16_t divider; // DIV register, upper 8 bits are readable at 0xFF04.
+    // Internal system counter: advances once per T-cycle and wraps at 65536.
+    // DIV (FF04) exposes its upper 8 bits; TIMA uses selected falling edges.
+    uint16_t divider;
 
     uint8_t tima; // TIMA register, readable/writable at 0xFF05.
     uint8_t tma; // TMA register, readable/writable at 0xFF06.

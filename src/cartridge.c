@@ -108,7 +108,7 @@ bool load_rom(Cartridge *cartridge, const char *filename)
     // 00: ROM ONLY; 01: MBC1 without external RAM.
     // For this initial MBC1 implementation, map banks 0 and 1 directly
     // into 0000-3FFF and 4000-7FFF. Mapper register writes are ignored.
-    bool supported_type = header.type == 0x00 || header.type == 0x01;
+    bool supported_type = header.type == 0x00 || header.type == 0x01 || header.type == 0x02 || header.type == 0x03;
 
     if (!supported_type ||
         header.rom_size != ROM_SIZE ||

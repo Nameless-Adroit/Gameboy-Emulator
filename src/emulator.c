@@ -40,6 +40,7 @@ int main(int argc, char **argv)
         }
 
         unsigned cycles = cpu_step(&cpu, &memory);
+        // Includes HALT idle and interrupt-dispatch time; units are T-cycles.
         memory_tick(&memory, cycles);
 
         // Progress report only once per million instructions.

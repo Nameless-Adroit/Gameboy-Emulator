@@ -2,6 +2,7 @@
 
 static unsigned selected_bit(uint8_t tac)
 {
+    // Falling-edge periods in T-cycles: 1024, 16, 64, 256.
     switch (tac & 0x03) {
         case 0: return 9;
         case 1: return 3;
@@ -37,6 +38,7 @@ void timer_tick(Timer *timer,
                 uint8_t *interrupt_flags,
                 unsigned t_cycles)
 {
+    // Process each T-cycle so a batch cannot skip TIMA edges or reload delays.
     for (unsigned i = 0; i < t_cycles; i++) {
 
         // Complete a previously scheduled reload.
@@ -93,6 +95,7 @@ void timer_write(Timer *timer,
     switch (address) {
 
         case 0xFF04:
+            // Any value resets the entire counter, including DIV's hidden phase.
             timer->divider = 0;
             break;
 
