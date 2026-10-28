@@ -31,7 +31,10 @@ repository is stale and is deliberately excluded from the delivery archive.
 
 * Public register, flag, fetch and stack helpers retain their original names.
 * `cpu_step()` now returns **T-cycles** and records them in `cycles` and
-  `total_cycles`. Existing callers may ignore the return value.
+  `total_cycles`. CPU fetches, reads, writes and internal machine cycles advance
+  peripherals through one clock helper. The returned cycles are already clocked;
+  callers must not pass them to `memory_tick()` again. Raw `memory_read()` and
+  `memory_write()` never advance time. Public CPU fetch/stack helpers are timed.
 * `execute()` decodes regular opcode families, then handles exceptional cases.
   Grouping is intentional: e.g. LD B,C and LD D,E share flag/timing behavior.
 * `execute_cb()` divides the byte into group, bit/operation and operand fields.
@@ -66,13 +69,15 @@ ROM protection, RAM mirrors, unmapped regions or memory-mapped device behavior.
 The ROM loader rejects files larger than 32 KiB instead of silently truncating.
 A 32 KiB file fitting the loader is not a guarantee of cartridge compatibility.
 
-No PPU, framebuffer, timer/DIV, DMA, MBC, joypad, APU or accurate serial device is
-implemented. The runner prints the common serial-test convention and stops on
-HALT/STOP because there are no devices to wake it. A complete emulator must
-continue clocking peripherals during HALT and drive interrupt requests.
+Timer/DIV is implemented and continues clocking during HALT, including timer
+interrupt requests. No PPU, framebuffer, DMA, full MBC, joypad, APU or accurate
+serial device is implemented. The runner prints the common serial-test convention
+and stops on STOP/lock-up or the step limit.
 
-Timing is instruction-level. It is not machine-cycle/bus accurate; interrupt
-cancellation races, OAM corruption, detailed STOP behavior (DIV/input quirks,
+CPU bus accesses consume four T-cycles each; internal cycles occur explicitly
+between accesses. Bus reads/writes sample or commit at the end of their machine
+cycle. This is not full T-cycle hardware accuracy: interrupt cancellation races,
+OAM corruption, detailed STOP behavior (DIV/input quirks,
 nonzero second byte), and CGB KEY1 speed switching are not implemented. Reset
 uses the existing conventional DMG post-boot CPU registers, not a boot ROM or
 complete post-boot peripheral initialization.

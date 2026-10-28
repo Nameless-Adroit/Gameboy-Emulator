@@ -126,10 +126,32 @@ uint16_t get_reg(CPU *cpu, Reg reg)
     }
 }
 
+/* CPU machine cycles share one clock path. Raw bus accesses remain untimed.
+ * Sample/commit the bus at the end of each four-T-cycle access. Internal
+ * cycles use the same helper, so counters and peripherals cannot drift. */
+static void cpu_tick(CPU *cpu, Memory *memory, unsigned t_cycles)
+{
+    memory_tick(memory, t_cycles);
+    cpu->cycles += t_cycles;
+    cpu->total_cycles += t_cycles;
+}
+
+static uint8_t cpu_read(CPU *cpu, Memory *memory, uint16_t address)
+{
+    cpu_tick(cpu, memory, 4);
+    return memory_read(memory, address);
+}
+
+static void cpu_write(CPU *cpu, Memory *memory, uint16_t address, uint8_t value)
+{
+    cpu_tick(cpu, memory, 4);
+    memory_write(memory, address, value);
+}
+
 // Fetch a single byte and advance PC
 uint8_t fetch_byte(CPU *cpu, Memory *memory)
 {
-    uint8_t byte = memory_read(memory, cpu->PC);
+    uint8_t byte = cpu_read(cpu, memory, cpu->PC);
     cpu->PC++;
     return byte;
 }
@@ -219,18 +241,18 @@ void push_word(CPU *cpu, Memory *memory, uint16_t value)
     uint8_t low  = (uint8_t)(value & 0xFF);
 
     cpu->SP--;
-    memory_write(memory, cpu->SP, high);
+    cpu_write(cpu, memory, cpu->SP, high);
 
     cpu->SP--;
-    memory_write(memory, cpu->SP, low);
+    cpu_write(cpu, memory, cpu->SP, low);
 }
 
 uint16_t pop_word(CPU *cpu, Memory *memory)
 {
-    uint8_t low = memory_read(memory, cpu->SP);
+    uint8_t low = cpu_read(cpu, memory, cpu->SP);
     cpu->SP++;
 
-    uint8_t high = memory_read(memory, cpu->SP);
+    uint8_t high = cpu_read(cpu, memory, cpu->SP);
     cpu->SP++;
 
     return (uint16_t)((high << 8) | low);
@@ -247,13 +269,13 @@ static const Reg registers[8] = {
 
 static uint8_t read_r8(CPU *cpu, Memory *memory, unsigned r)
 {
-    return r == 6 ? memory_read(memory, get_reg(cpu, REG_HL))
+    return r == 6 ? cpu_read(cpu, memory, get_reg(cpu, REG_HL))
                   : (uint8_t)get_reg(cpu, registers[r]);
 }
 
 static void write_r8(CPU *cpu, Memory *memory, unsigned r, uint8_t value)
 {
-    if (r == 6) memory_write(memory, get_reg(cpu, REG_HL), value);
+    if (r == 6) cpu_write(cpu, memory, get_reg(cpu, REG_HL), value);
     else set_reg(cpu, registers[r], value);
 }
 
@@ -315,7 +337,7 @@ static uint8_t rotate_shift(CPU *cpu, unsigned operation, uint8_t value)
     return result;
 }
 
-static unsigned execute_cb(CPU *cpu, Memory *memory)
+static void execute_cb(CPU *cpu, Memory *memory)
 {
     uint8_t op = fetch_byte(cpu, memory);
     unsigned group = op >> 6, bit = (op >> 3) & 7, r = op & 7;
@@ -332,8 +354,7 @@ static unsigned execute_cb(CPU *cpu, Memory *memory)
                            : (uint8_t)(value | (1u << bit));
         write_r8(cpu, memory, r, value);
     }
-    // These totals include the prefix fetch. BIT (HL) has no write cycle.
-    return r == 6 ? (group == 1 ? 12 : 16) : 8;
+    // BIT (HL) only reads; other memory operations also consume a write cycle.
 }
 
 static void add_hl(CPU *cpu, uint16_t value)
@@ -379,7 +400,7 @@ static void daa(CPU *cpu)
            | (carry ? FLAG_C : 0);
 }
 
-static unsigned execute(CPU *cpu, Memory *memory, uint8_t op)
+static void execute(CPU *cpu, Memory *memory, uint8_t op)
 {
     unsigned r = (op >> 3) & 7, pair = (op >> 4) & 3;
     uint16_t address, value;
@@ -388,169 +409,184 @@ static unsigned execute(CPU *cpu, Memory *memory, uint8_t op)
     if (op >= 0x40 && op <= 0x7F) {
         if (op == 0x76) {
             // HALT bug: pending enabled interrupt with IME=0 inhibits the
-            // next opcode fetch's PCa increment instead of entering HALT.
+            // next opcode fetch's PC increment instead of entering HALT.
             if (!cpu->ime && (memory_read(memory, 0xFFFF)
                            & memory_read(memory, 0xFF0F) & 0x1F))
                 cpu->halt_bug = true;
             else cpu->state = CPU_HALTED;
-            return 4;
+            return;
         }
         write_r8(cpu, memory, r, read_r8(cpu, memory, op & 7));
-        return r == 6 || (op & 7) == 6 ? 8 : 4;
+        return;
     }
     if (op >= 0x80 && op <= 0xBF) {
         alu(cpu, r, read_r8(cpu, memory, op & 7));
-        return (op & 7) == 6 ? 8 : 4;
+        return;
     }
     if (op < 0x40) {
         if ((op & 7) == 4) {
             byte = inc8(cpu, read_r8(cpu, memory, r));
             write_r8(cpu, memory, r, byte);
-            return r == 6 ? 12 : 4;
+            return;
         }
         if ((op & 7) == 5) {
             byte = dec8(cpu, read_r8(cpu, memory, r));
             write_r8(cpu, memory, r, byte);
-            return r == 6 ? 12 : 4;
+            return;
         }
         if ((op & 7) == 6) {
             byte = fetch_byte(cpu, memory);
             write_r8(cpu, memory, r, byte);
-            return r == 6 ? 12 : 8;
+            return;
         }
         if ((op & 15) == 1) {
             value = fetch_word(cpu, memory);
             set_reg(cpu, pairs[pair], value);
-            return 12;
+            return;
         }
         if ((op & 15) == 3 || (op & 15) == 11) {
             value = get_reg(cpu, pairs[pair]);
             value = (uint16_t)(value + ((op & 8) ? -1 : 1));
             set_reg(cpu, pairs[pair], value); // 16-bit INC/DEC preserve flags.
-            return 8;
+            cpu_tick(cpu, memory, 4);
+            return;
         }
         if ((op & 15) == 9) {
             add_hl(cpu, get_reg(cpu, pairs[pair]));
-            return 8;
+            cpu_tick(cpu, memory, 4);
+            return;
         }
         if ((op & 7) == 2) {
             // BC, DE, HL+, HL- indirect loads, in both directions.
             address = get_reg(cpu, pair < 2 ? pairs[pair] : REG_HL);
-            if (op & 8) cpu->A = memory_read(memory, address);
-            else memory_write(memory, address, cpu->A);
+            if (op & 8) cpu->A = cpu_read(cpu, memory, address);
+            else cpu_write(cpu, memory, address, cpu->A);
             if (pair >= 2)
                 set_reg(cpu, REG_HL, (uint16_t)(address + (pair == 2 ? 1 : -1)));
-            return 8;
+            return;
         }
     }
     if (op >= 0xC0) {
         if ((op & 0xE7) == 0xC0) { // RET cc
-            if (!condition(cpu, (op >> 3) & 3)) return 8;
+            cpu_tick(cpu, memory, 4);
+            if (!condition(cpu, (op >> 3) & 3)) return;
             cpu->PC = pop_word(cpu, memory);
-            return 20;
+            cpu_tick(cpu, memory, 4);
+            return;
         }
         if ((op & 0xE7) == 0xC2) { // JP cc,a16
             address = fetch_word(cpu, memory);
-            if (!condition(cpu, (op >> 3) & 3)) return 12;
+            if (!condition(cpu, (op >> 3) & 3)) return;
             cpu->PC = address;
-            return 16;
+            cpu_tick(cpu, memory, 4);
+            return;
         }
         if ((op & 0xE7) == 0xC4) { // CALL cc,a16
             address = fetch_word(cpu, memory);
-            if (!condition(cpu, (op >> 3) & 3)) return 12;
+            if (!condition(cpu, (op >> 3) & 3)) return;
+            cpu_tick(cpu, memory, 4);
             push_word(cpu, memory, cpu->PC);
             cpu->PC = address;
-            return 24;
+            return;
         }
         if ((op & 0xCF) == 0xC1) {
             set_reg(cpu, stack_pairs[pair], pop_word(cpu, memory));
-            return 12; // set_reg masks the unused F bits for POP AF.
+            return; // set_reg masks the unused F bits for POP AF.
         }
         if ((op & 0xCF) == 0xC5) {
+            cpu_tick(cpu, memory, 4);
             push_word(cpu, memory, get_reg(cpu, stack_pairs[pair]));
-            return 16;
+            return;
         }
         if ((op & 7) == 6) {
             alu(cpu, r, fetch_byte(cpu, memory));
-            return 8;
+            return;
         }
         if ((op & 7) == 7) { // RST vectors: 00,08,10,18,20,28,30,38.
+            cpu_tick(cpu, memory, 4);
             push_word(cpu, memory, cpu->PC);
             cpu->PC = (uint16_t)(op & 0x38);
-            return 16;
+            return;
         }
     }
     switch (op) {
-    case 0x00: return 4; // NOP
+    case 0x00: return; // NOP
     case 0x07: case 0x0F: case 0x17: case 0x1F:
         cpu->A = rotate_shift(cpu, op >> 3, cpu->A);
         cpu->F &= (uint8_t)~FLAG_Z; // Unprefixed accumulator rotates clear Z.
-        return 4;
+        return;
     case 0x08:
         address = fetch_word(cpu, memory);
-        memory_write(memory, address, (uint8_t)cpu->SP);
-        memory_write(memory, (uint16_t)(address + 1), (uint8_t)(cpu->SP >> 8));
-        return 20;
+        cpu_write(cpu, memory, address, (uint8_t)cpu->SP);
+        cpu_write(cpu, memory, (uint16_t)(address + 1), (uint8_t)(cpu->SP >> 8));
+        return;
     case 0x10:
-        (void)fetch_byte(cpu, memory); // Conventional two-byte STOP 00.
+        ++cpu->PC; // Consume STOP padding without a second machine cycle.
         cpu->state = CPU_STOPPED;
-        return 4; // CGB speed switching and hardware STOP quirks are bus work.
+        return; // CGB speed switching and hardware STOP quirks are bus work.
     case 0x18:
         byte = fetch_byte(cpu, memory);
         cpu->PC = (uint16_t)(cpu->PC + signed_byte(byte));
-        return 12;
+        cpu_tick(cpu, memory, 4);
+        return;
     case 0x20: case 0x28: case 0x30: case 0x38:
         byte = fetch_byte(cpu, memory); // Operand is consumed even if not taken.
-        if (!condition(cpu, (op >> 3) & 3)) return 8;
+        if (!condition(cpu, (op >> 3) & 3)) return;
         cpu->PC = (uint16_t)(cpu->PC + signed_byte(byte));
-        return 12;
-    case 0x27: daa(cpu); return 4;
-    case 0x2F: cpu->A = (uint8_t)~cpu->A; cpu->F |= FLAG_N | FLAG_H; return 4;
-    case 0x37: cpu->F = (cpu->F & FLAG_Z) | FLAG_C; return 4;
-    case 0x3F: cpu->F = (cpu->F & FLAG_Z) | ((cpu->F ^ FLAG_C) & FLAG_C); return 4;
-    case 0xC3: cpu->PC = fetch_word(cpu, memory); return 16;
-    case 0xC9: cpu->PC = pop_word(cpu, memory); return 16;
-    case 0xCB: return execute_cb(cpu, memory);
+        cpu_tick(cpu, memory, 4);
+        return;
+    case 0x27: daa(cpu); return;
+    case 0x2F: cpu->A = (uint8_t)~cpu->A; cpu->F |= FLAG_N | FLAG_H; return;
+    case 0x37: cpu->F = (cpu->F & FLAG_Z) | FLAG_C; return;
+    case 0x3F: cpu->F = (cpu->F & FLAG_Z) | ((cpu->F ^ FLAG_C) & FLAG_C); return;
+    case 0xC3: cpu->PC = fetch_word(cpu, memory); cpu_tick(cpu, memory, 4); return;
+    case 0xC9:
+        cpu->PC = pop_word(cpu, memory);
+        cpu_tick(cpu, memory, 4);
+        return;
+    case 0xCB: execute_cb(cpu, memory); return;
     case 0xCD:
         address = fetch_word(cpu, memory);
+        cpu_tick(cpu, memory, 4);
         push_word(cpu, memory, cpu->PC);
         cpu->PC = address;
-        return 24;
+        return;
     case 0xD9:
         cpu->PC = pop_word(cpu, memory);
+        cpu_tick(cpu, memory, 4);
         cpu->ime = true; cpu->ime_delay = 0;
-        return 16;
+        return;
     case 0xE0:
         address = (uint16_t)(0xFF00u + fetch_byte(cpu, memory));
-        memory_write(memory, address, cpu->A); return 12;
-    case 0xE2: memory_write(memory, (uint16_t)(0xFF00u + cpu->C), cpu->A); return 8;
+        cpu_write(cpu, memory, address, cpu->A); return;
+    case 0xE2: cpu_write(cpu, memory, (uint16_t)(0xFF00u + cpu->C), cpu->A); return;
     case 0xE8:
         byte = fetch_byte(cpu, memory);
-        cpu->SP = add_sp_offset(cpu, byte); return 16;
-    case 0xE9: cpu->PC = get_reg(cpu, REG_HL); return 4; // JP HL, no memory read.
+        cpu->SP = add_sp_offset(cpu, byte); cpu_tick(cpu, memory, 8); return;
+    case 0xE9: cpu->PC = get_reg(cpu, REG_HL); return; // JP HL, no memory read.
     case 0xEA:
         address = fetch_word(cpu, memory);
-        memory_write(memory, address, cpu->A); return 16;
+        cpu_write(cpu, memory, address, cpu->A); return;
     case 0xF0:
         address = (uint16_t)(0xFF00u + fetch_byte(cpu, memory));
-        cpu->A = memory_read(memory, address); return 12;
-    case 0xF2: cpu->A = memory_read(memory, (uint16_t)(0xFF00u + cpu->C)); return 8;
-    case 0xF3: cpu->ime = false; cpu->ime_delay = 0; return 4;
+        cpu->A = cpu_read(cpu, memory, address); return;
+    case 0xF2: cpu->A = cpu_read(cpu, memory, (uint16_t)(0xFF00u + cpu->C)); return;
+    case 0xF3: cpu->ime = false; cpu->ime_delay = 0; return;
     case 0xF8:
         byte = fetch_byte(cpu, memory);
-        set_reg(cpu, REG_HL, add_sp_offset(cpu, byte)); return 12;
-    case 0xF9: cpu->SP = get_reg(cpu, REG_HL); return 8;
+        set_reg(cpu, REG_HL, add_sp_offset(cpu, byte)); cpu_tick(cpu, memory, 4); return;
+    case 0xF9: cpu->SP = get_reg(cpu, REG_HL); cpu_tick(cpu, memory, 4); return;
     case 0xFA:
         address = fetch_word(cpu, memory);
-        cpu->A = memory_read(memory, address); return 16;
+        cpu->A = cpu_read(cpu, memory, address); return;
     case 0xFB:
         // A second EI must not postpone the first EI's pending enable.
         if (!cpu->ime && !cpu->ime_delay) cpu->ime_delay = 2;
-        return 4;
+        return;
     default:
         // D3 DB DD E3 E4 EB EC ED F4 FC FD lock the actual CPU.
         cpu->state = CPU_LOCKED;
-        return 4;
+        return;
     }
 }
 
@@ -561,12 +597,11 @@ void cpu_wake_stop(CPU *cpu)
 
 unsigned cpu_step(CPU *cpu, Memory *memory)
 {
-    unsigned cycles;
     uint8_t pending;
     cpu->cycles = 0;
     if (cpu->state == CPU_STOPPED) return 0;
     if (cpu->state == CPU_LOCKED) {
-        cycles = 4;
+        cpu_tick(cpu, memory, 4);
         goto finish;
     }
     pending = memory_read(memory, 0xFFFF) & memory_read(memory, 0xFF0F) & 0x1F;
@@ -582,24 +617,23 @@ unsigned cpu_step(CPU *cpu, Memory *memory)
             cpu->halt_bug = false;
             memory_write(memory, 0xFF0F,
                          (uint8_t)(memory_read(memory, 0xFF0F) & ~(1u << interrupt)));
+            cpu_tick(cpu, memory, 8);
             push_word(cpu, memory, cpu->PC);
             cpu->PC = (uint16_t)(0x40 + interrupt * 8);
-            cycles = 20;
+            cpu_tick(cpu, memory, 4);
             goto finish;
         }
     }
     if (cpu->state == CPU_HALTED) {
-        cycles = 4; // Peripheral clocks continue while instruction fetching stops.
+        cpu_tick(cpu, memory, 4); // HALT keeps peripheral clocks running.
     } else {
-        uint8_t opcode = memory_read(memory, cpu->PC);
+        uint8_t opcode = cpu_read(cpu, memory, cpu->PC);
         if (cpu->halt_bug) cpu->halt_bug = false;
         else ++cpu->PC;
-        cycles = execute(cpu, memory, opcode);
+        execute(cpu, memory, opcode);
         if (cpu->ime_delay && --cpu->ime_delay == 0) cpu->ime = true;
     }
 finish:
     cpu->F &= 0xF0;
-    cpu->cycles = cycles;
-    cpu->total_cycles += cycles;
-    return cycles;
+    return cpu->cycles;
 }

@@ -43,6 +43,7 @@ CPUStates get_cpu_state(CPU *cpu);
 void      set_reg(CPU *cpu, Reg reg, uint16_t value);
 uint16_t  get_reg(CPU *cpu, Reg reg);
 
+// Fetch and stack helpers perform timed CPU bus accesses.
 uint8_t   fetch_byte(CPU *cpu, Memory *memory);
 uint16_t  fetch_word(CPU *cpu, Memory *memory);
 
@@ -57,7 +58,8 @@ bool get_flag(CPU *cpu, CPUFlag flag);
 void push_word(CPU *cpu, Memory *memory, uint16_t value);
 uint16_t pop_word(CPU *cpu, Memory *memory);
 // Returns T-cycles (4 per machine cycle). STOP returns 0 until explicit wake.
-// Instruction-level timing only; memory accesses are not individually clocked.
+// Advances peripherals during bus accesses and internal machine cycles.
+// Returned time is already clocked: callers must not tick it again.
 unsigned cpu_step(CPU *cpu, Memory *memory);
 void cpu_wake_stop(CPU *cpu); // Joypad/peripheral integration calls this.
 

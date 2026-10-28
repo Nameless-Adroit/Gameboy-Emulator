@@ -39,9 +39,8 @@ int main(int argc, char **argv)
             break;
         }
 
-        unsigned cycles = cpu_step(&cpu, &memory);
-        // Includes HALT idle and interrupt-dispatch time; units are T-cycles.
-        memory_tick(&memory, cycles);
+        // CPU accesses and internal cycles already advance the hardware clock.
+        cpu_step(&cpu, &memory);
 
         // Progress report only once per million instructions.
         if ((steps + 1) % 1000000UL == 0)

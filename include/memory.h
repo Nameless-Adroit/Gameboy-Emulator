@@ -33,7 +33,7 @@ typedef struct Memory
 // Initialization
 void memory_init(Memory *memory);
 
-// CPU memory bus interface
+// Raw memory bus interface: reads and writes never advance time.
 uint8_t memory_read(Memory *memory, uint16_t address);
 void memory_write(Memory *memory,
                   uint16_t address,

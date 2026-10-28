@@ -119,6 +119,7 @@ static void timing_tests(void)
                     c.F = (cc & 1) ? 0 : (cc < 2 ? FLAG_Z : FLAG_C);
         CHECK(cpu_step(&c, &m) == timing[op]);
         CHECK(c.cycles == timing[op] && c.total_cycles == timing[op]);
+        CHECK(m.timer.divider == timing[op]);
     }
     for (unsigned kind = 0; kind < 4; ++kind)
         for (unsigned cc = 0; cc < 4; ++cc)
@@ -133,6 +134,7 @@ static void timing_tests(void)
                 memory_write(&m, 0xC101, 0x56);
                 const unsigned yes[] = {12,16,24,20}, no[] = {8,12,12,8};
                 CHECK(cpu_step(&c, &m) == (taken ? yes[kind] : no[kind]));
+                CHECK(m.timer.divider == c.total_cycles);
                 CHECK(c.PC == (taken ? (kind == 0 ? 0x136 : kind == 3 ? 0x5678 : 0x1234)
                                                    : (kind == 0 ? 0x102 : kind == 3 ? 0x101 : 0x103)));
             }
@@ -142,7 +144,55 @@ static void timing_tests(void)
         m.cartridge.rom[0x101] = (uint8_t)op;
         unsigned expected = (op & 7) != 6 ? 8 : (op >= 0x40 && op < 0x80 ? 12 : 16);
         CHECK(cpu_step(&c, &m) == expected);
+        CHECK(m.timer.divider == expected && c.total_cycles == expected);
     }
+}
+
+static void bus_timing_tests(void)
+{
+    setup(0);
+    memory_write(&m, 0xC000, 0x23);
+    CHECK(memory_read(&m, 0xC000) == 0x23);
+    CHECK(memory_read(&m, 0xFF04) == 0);
+    CHECK(m.timer.divider == 0 && c.total_cycles == 0);
+
+    // LDH A,(DIV) samples on its third machine cycle, not at decode time.
+    setup(0xF0); m.cartridge.rom[0x101] = 4;
+    m.timer.divider = 244;
+    CHECK(cpu_step(&c, &m) == 12 && c.A == 1);
+    CHECK(m.timer.divider == 256 && c.total_cycles == 12);
+
+    // LDH (DIV),A resets at the write cycle, with no extra tick afterwards.
+    setup(0xE0); m.cartridge.rom[0x101] = 4;
+    CHECK(cpu_step(&c, &m) == 12 && m.timer.divider == 0);
+    CHECK(c.total_cycles == 12);
+
+    // INC (TIMA): timer edge between read and write must not change the
+    // previously sampled operand. The write replaces TIMA with 0x11.
+    setup(0x34); set_reg(&c, REG_HL, 0xFF05);
+    m.timer.divider = 4;
+    memory_write(&m, 0xFF05, 0x10);
+    memory_write(&m, 0xFF07, 5);
+    CHECK(cpu_step(&c, &m) == 12 && m.timer.tima == 0x11);
+    CHECK(m.timer.divider == 16);
+
+    // PUSH's internal cycle precedes stack writes: high byte resets DIV
+    // on cycle three, leaving exactly one machine cycle before completion.
+    setup(0xC5); c.SP = 0xFF05; set_reg(&c, REG_BC, 0x1234);
+    CHECK(cpu_step(&c, &m) == 16 && m.timer.divider == 4);
+
+    // Taken RET cc spends an internal cycle before reading the stack.
+    setup(0xC0); c.SP = 0xFF05;
+    m.timer.divider = 4;
+    memory_write(&m, 0xFF06, 0x42);
+    memory_write(&m, 0xFF07, 5);
+    CHECK(cpu_step(&c, &m) == 20 && c.PC == 0x4201);
+    CHECK(m.timer.divider == 24);
+
+    setup(0x10);
+    CHECK(cpu_step(&c, &m) == 4 && m.timer.divider == 4);
+    CHECK(cpu_step(&c, &m) == 0 && m.timer.divider == 4);
+    CHECK(c.cycles == 0 && c.total_cycles == 4);
 }
 
 static void timer_interrupt_tests(void)
@@ -168,14 +218,14 @@ static void timer_interrupt_tests(void)
     memory_write(&m, 0xFF06, 0x80);
     memory_write(&m, 0xFF07, 5);
     for (unsigned i = 0; i < 5; ++i) {
-        memory_tick(&m, cpu_step(&c, &m));
+        cpu_step(&c, &m);
         CHECK(c.state == CPU_HALTED && c.PC == 0x101);
     }
     CHECK(memory_read(&m, 0xFF0F) == 4);
-    memory_tick(&m, cpu_step(&c, &m));
+    cpu_step(&c, &m);
     CHECK(c.state == CPU_RUNNING && c.PC == 0x50 && !c.ime);
     CHECK(memory_read(&m, 0xFF0F) == 0);
-    memory_tick(&m, cpu_step(&c, &m));
+    cpu_step(&c, &m);
     CHECK(c.PC == 0x101 && c.ime && c.SP == 0xFFFE);
     CHECK(c.total_cycles == 56 && m.timer.divider == 56);
 }
@@ -227,7 +277,7 @@ static void decimal_tests(void)
 }
 int main(void)
 {
-    control_tests(); timing_tests(); timer_interrupt_tests();
+    control_tests(); timing_tests(); bus_timing_tests(); timer_interrupt_tests();
     arithmetic_tests(); decimal_tests();
     puts("PASS: opcode timing, timer interrupts, control boundaries, 655360 ALU cases, 40000 BCD cases");
     return 0;
