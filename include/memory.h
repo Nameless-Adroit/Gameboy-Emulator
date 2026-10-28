@@ -29,6 +29,9 @@ typedef struct Memory
 
     Timer timer;
     PPU ppu;
+#ifdef GB_GRAPHICS_TRACE
+    struct GraphicsTrace *trace; // Borrowed optional observer; never owns time.
+#endif
 
 } Memory;
 

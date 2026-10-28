@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "memory.h"
+#include "graphics_trace.h"
 
 // ------------------------------------------------------------
 // Initialize emulator memory
@@ -23,7 +24,11 @@ uint8_t memory_read(Memory *memory, uint16_t address)
 {
     // 0000-7FFF: Cartridge ROM
     if (address <= 0x7FFF) {
-        return cartridge_read(&memory->cartridge, address);
+        uint8_t value = cartridge_read(&memory->cartridge, address);
+#ifdef GB_GRAPHICS_TRACE
+        if (memory->trace) graphics_trace_rom(memory->trace, address, value);
+#endif
+        return value;
     }
 
     // 8000-9FFF: Video RAM
@@ -88,6 +93,11 @@ void memory_write(Memory *memory,
                   uint16_t address,
                   uint8_t value)
 {
+#ifdef GB_GRAPHICS_TRACE
+    if (memory->trace)
+        graphics_trace_write(memory->trace, memory->vram, memory->ppu.lcdc,
+            memory->ppu.scx, memory->ppu.scy, address, value);
+#endif
     // 0000-7FFF: ROM-only cartridge
     // Writes do not alter ROM contents.
     if (address <= 0x7FFF) {
@@ -173,4 +183,7 @@ void memory_tick(Memory *memory, unsigned t_cycles)
     timer_tick(&memory->timer, &memory->io[0x0F], t_cycles);
     // DMG: one PPU dot per CPU T-cycle, including HALT idle time.
     ppu_tick(&memory->ppu, t_cycles, &memory->io[0x0F]);
+#ifdef GB_GRAPHICS_TRACE
+    if (memory->trace) memory->trace->cycles += t_cycles;
+#endif
 }

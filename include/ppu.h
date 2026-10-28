@@ -10,6 +10,9 @@
 typedef struct {
     // Position within the current scanline: 0..455 while enabled.
     unsigned dot;
+#ifdef GB_GRAPHICS_TRACE
+    struct GraphicsTrace *trace; // Borrowed optional observer; never owns time.
+#endif
 
     // Current scanline: 0..153 in this simplified timing model.
     uint8_t ly;

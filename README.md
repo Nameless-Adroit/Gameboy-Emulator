@@ -12,6 +12,22 @@ not yet a complete Game Boy emulator.
 See [REVIEW.md](REVIEW.md) for the original-code assessment and
 [OPCODE_AUDIT.md](OPCODE_AUDIT.md) for all 512 opcode-table entries.
 
+## SDL window
+
+The optional SDL2 frontend displays completed PPU frames with nearest-neighbor
+integer scaling. On Ubuntu:
+
+```sh
+sudo apt-get install libsdl2-dev
+cmake -S . -B build -DGB_ENABLE_SDL=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+./build/gb_sdl tests/diagnostic/background.gb
+```
+
+Close the window or press Escape to quit. See [SDL_FRONTEND.md](SDL_FRONTEND.md)
+for setup, presentation/timing separation, comments on each function and tests.
+SDL is disabled by default; the headless build below requires no SDL.
+
 ## Build and run
 
 ```sh
@@ -110,3 +126,11 @@ shade bars, checkerboard and X tiles. Export the actual CPU-rendered framebuffer
 ```
 
 ![Background diagnostic preview](tests/diagnostic/background.png)
+
+## Graphics pipeline trace
+
+An optional build-time and runtime trace follows one pixel from CPU ROM reads
+and VRAM writes through tile decoding, BGP, framebuffer and SDL presentation.
+It defaults to pixel `(20,40)` and bounded output over two rendering passes.
+See [GRAPHICS_TRACE.md](GRAPHICS_TRACE.md) for build flags, the flow diagram,
+actual diagnostic records and a worked pixel example.

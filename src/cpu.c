@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "cpu.h"
+#include "graphics_trace.h"
 #include "memory.h"
 
 void reset_cpu(CPU *cpu, Memory *memory)
@@ -142,6 +143,20 @@ static uint8_t cpu_read(CPU *cpu, Memory *memory, uint16_t address)
     return memory_read(memory, address);
 }
 
+#ifdef GB_GRAPHICS_TRACE
+/* Fetches retain identical bus timing, but are distinguished from ROM data
+ * reads so trace mode never prints the instruction stream. */
+static uint8_t cpu_fetch(CPU *cpu, Memory *memory, uint16_t address)
+{
+    if (memory->trace) memory->trace->fetching = true;
+    uint8_t value = cpu_read(cpu, memory, address);
+    if (memory->trace) memory->trace->fetching = false;
+    return value;
+}
+#else
+#define cpu_fetch cpu_read
+#endif
+
 static void cpu_write(CPU *cpu, Memory *memory, uint16_t address, uint8_t value)
 {
     cpu_tick(cpu, memory, 4);
@@ -151,7 +166,7 @@ static void cpu_write(CPU *cpu, Memory *memory, uint16_t address, uint8_t value)
 // Fetch a single byte and advance PC
 uint8_t fetch_byte(CPU *cpu, Memory *memory)
 {
-    uint8_t byte = cpu_read(cpu, memory, cpu->PC);
+    uint8_t byte = cpu_fetch(cpu, memory, cpu->PC);
     cpu->PC++;
     return byte;
 }
@@ -600,6 +615,12 @@ unsigned cpu_step(CPU *cpu, Memory *memory)
     uint8_t pending;
     cpu->cycles = 0;
     if (cpu->state == CPU_STOPPED) return 0;
+#ifdef GB_GRAPHICS_TRACE
+    if (memory->trace) {
+        memory->trace->pc = cpu->PC;
+        memory->trace->cpu_active = true;
+    }
+#endif
     if (cpu->state == CPU_LOCKED) {
         cpu_tick(cpu, memory, 4);
         goto finish;
@@ -627,13 +648,16 @@ unsigned cpu_step(CPU *cpu, Memory *memory)
     if (cpu->state == CPU_HALTED) {
         cpu_tick(cpu, memory, 4); // HALT keeps peripheral clocks running.
     } else {
-        uint8_t opcode = cpu_read(cpu, memory, cpu->PC);
+        uint8_t opcode = cpu_fetch(cpu, memory, cpu->PC);
         if (cpu->halt_bug) cpu->halt_bug = false;
         else ++cpu->PC;
         execute(cpu, memory, opcode);
         if (cpu->ime_delay && --cpu->ime_delay == 0) cpu->ime = true;
     }
 finish:
+#ifdef GB_GRAPHICS_TRACE
+    if (memory->trace) memory->trace->cpu_active = false;
+#endif
     cpu->F &= 0xF0;
     return cpu->cycles;
 }

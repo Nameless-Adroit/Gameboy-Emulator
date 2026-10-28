@@ -1,4 +1,5 @@
 #include "ppu.h"
+#include "graphics_trace.h"
 
 #include <string.h>
 
@@ -77,11 +78,18 @@ static void render_background_line(PPU *ppu)
     if (!(ppu->lcdc & 0x01) || ppu->vram == NULL) {
         // DMG BG disabled is white regardless of BGP's color-zero mapping.
         memset(output, 0, LCD_WIDTH);
+#ifdef GB_GRAPHICS_TRACE
+        if (ppu->trace && ppu->ly == ppu->trace->y)
+            graphics_trace_blank(ppu->trace, ppu->vram ? "BG-disabled" : "VRAM-detached");
+#endif
         return;
     }
     unsigned map = (ppu->lcdc & 0x08) ? 0x1C00u : 0x1800u;
     unsigned y = ((unsigned)ppu->scy + ppu->ly) & 0xFFu;
     uint8_t row[8];
+#ifdef GB_GRAPHICS_TRACE
+    unsigned source_map = 0, source_id = 0, source_row = 0;
+#endif
     for (unsigned x = 0; x < LCD_WIDTH; ++x) {
         unsigned bg_x = ((unsigned)ppu->scx + x) & 0xFFu;
         if (x == 0 || (bg_x & 7u) == 0) {
@@ -94,10 +102,21 @@ static void render_background_line(PPU *ppu)
                 tile_offset = (unsigned)(0x1000 + signed_id * 16); // Base 9000.
             }
             unsigned offset = tile_offset + (y & 7u) * 2;
+#ifdef GB_GRAPHICS_TRACE
+            source_map = 0x8000 + map + (y / 8) * 32 + bg_x / 8;
+            source_id = id;
+            source_row = 0x8000 + offset;
+#endif
             ppu_decode_tile_row(ppu->vram[offset], ppu->vram[offset + 1], row);
         }
         unsigned color = row[bg_x & 7u];
         output[x] = (uint8_t)(((unsigned)ppu->bgp >> (color * 2)) & 3u);
+#ifdef GB_GRAPHICS_TRACE
+        if (ppu->trace && ppu->ly == ppu->trace->y && x == ppu->trace->x)
+            graphics_trace_pixel(ppu->trace, source_map, source_id, source_row,
+                ppu->vram[source_row - 0x8000], ppu->vram[source_row - 0x8000 + 1],
+                color, ppu->bgp, output[x]);
+#endif
     }
 }
 
@@ -105,15 +124,28 @@ void ppu_tick(PPU *ppu, unsigned dots, uint8_t *interrupt_flags)
 {
     if (ppu->lcdc & LCD_ENABLE) {
         for (unsigned i = 0; i < dots; ++i) {
+#ifdef GB_GRAPHICS_TRACE
+            // memory_tick commits the batch clock after ticking devices. Offset
+            // within the batch gives exact event time even for a large batch.
+            if (ppu->trace) ppu->trace->event_cycle = ppu->trace->cycles + i + 1;
+#endif
             ++ppu->dot;
             if (ppu->ly < LCD_HEIGHT &&
                 ppu->dot == OAM_SCAN_DOTS + TRANSFER_DOTS)
                 render_background_line(ppu);
             if (ppu->dot == DOTS_PER_LINE) {
                 ppu->dot = 0;
-                if (++ppu->ly == LINES_PER_FRAME) ppu->ly = 0;
+                if (++ppu->ly == LINES_PER_FRAME) {
+                    ppu->ly = 0;
+#ifdef GB_GRAPHICS_TRACE
+                    if (ppu->trace) graphics_trace_frame_start(ppu->trace);
+#endif
+                }
                 if (ppu->ly == LCD_HEIGHT) {
                     ppu->frame_ready = true;
+#ifdef GB_GRAPHICS_TRACE
+                    if (ppu->trace) graphics_trace_vblank(ppu->trace);
+#endif
                     ppu->pending_interrupts |= VBLANK_INTERRUPT;
                 }
             }
@@ -152,6 +184,10 @@ void ppu_write(PPU *ppu, uint16_t address, uint8_t value)
             ppu->dot = 0;
             ppu->ly = 0;
             ppu->frame_ready = false;
+#ifdef GB_GRAPHICS_TRACE
+            if ((value & LCD_ENABLE) && ppu->trace)
+                graphics_trace_frame_start(ppu->trace);
+#endif
             if (!(value & LCD_ENABLE)) {
                 memset(ppu->framebuffer, 0, sizeof(ppu->framebuffer));
             }

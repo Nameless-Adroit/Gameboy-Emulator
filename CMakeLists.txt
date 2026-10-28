@@ -40,6 +40,11 @@ option(GB_ENABLE_WARNINGS
 option(GB_ENABLE_SANITIZERS
     "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
+# SDL is optional: gbcore and the headless gb runner never depend on it.
+option(GB_ENABLE_SDL "Build the SDL2 window frontend" OFF)
+
+option(GB_ENABLE_GRAPHICS_TRACE "Compile optional graphics pipeline instrumentation" OFF)
+
 # CTest defines the BUILD_TESTING option.
 include(CTest)
 
@@ -93,6 +98,7 @@ endif()
 # ------------------------------------------------------------
 
 add_library(gbcore STATIC
+    src/graphics_trace.c
     src/cpu.c
     src/memory.c
     src/cartridge.c
@@ -106,6 +112,9 @@ target_include_directories(gbcore PUBLIC
 )
 
 target_link_libraries(gbcore PUBLIC gb_options)
+if(GB_ENABLE_GRAPHICS_TRACE)
+    target_compile_definitions(gbcore PUBLIC GB_GRAPHICS_TRACE=1)
+endif()
 
 # ------------------------------------------------------------
 # 6. Main Emulator Executable
@@ -117,11 +126,51 @@ add_executable(gb
 
 target_link_libraries(gb PRIVATE gbcore)
 
+# Keep all platform presentation dependencies on a separate target. SDL 2.0.12
+# provides explicit per-texture nearest-neighbor scaling control.
+if(GB_ENABLE_SDL)
+    find_package(SDL2 2.0.12 CONFIG REQUIRED)
+    add_library(gb_sdl_frontend STATIC src/frontend/sdl_frontend.c)
+    target_include_directories(gb_sdl_frontend PUBLIC ${PROJECT_SOURCE_DIR}/src/frontend)
+    target_link_libraries(gb_sdl_frontend PUBLIC gbcore SDL2::SDL2)
+    add_executable(gb_sdl src/frontend/main.c)
+    target_link_libraries(gb_sdl PRIVATE gb_sdl_frontend)
+endif()
+
 # ------------------------------------------------------------
 # 7. Automated Tests
 # ------------------------------------------------------------
 
 if(BUILD_TESTING)
+
+    if(GB_ENABLE_GRAPHICS_TRACE)
+        add_executable(graphics_trace_tests tests/test_graphics_trace.c)
+        target_link_libraries(graphics_trace_tests PRIVATE gbcore)
+        add_test(NAME Graphics_Trace_Tests COMMAND graphics_trace_tests
+            "${PROJECT_SOURCE_DIR}/tests/diagnostic/background.gb")
+        if(GB_ENABLE_SDL)
+            add_test(NAME SDL_Graphics_Trace COMMAND gb_sdl
+                "${PROJECT_SOURCE_DIR}/tests/diagnostic/background.gb"
+                --frames 2 --graphics-trace)
+            set_tests_properties(SDL_Graphics_Trace PROPERTIES
+                ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
+                PASS_REGULAR_EXPRESSION "SDL_PRESENT.*SDL_ARGB=FFFFFFFF"
+                TIMEOUT 15)
+        endif()
+    endif()
+
+    if(GB_ENABLE_SDL)
+        add_executable(sdl_frontend_tests tests/test_sdl_frontend.c)
+        target_link_libraries(sdl_frontend_tests PRIVATE gb_sdl_frontend)
+        add_test(NAME SDL_Frontend_Tests COMMAND sdl_frontend_tests)
+        add_test(NAME SDL_Diagnostic_Smoke COMMAND gb_sdl
+            "${PROJECT_SOURCE_DIR}/tests/diagnostic/background.gb" --frames 2)
+        set_tests_properties(SDL_Frontend_Tests SDL_Diagnostic_Smoke PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
+            TIMEOUT 15)
+        set_tests_properties(SDL_Diagnostic_Smoke PROPERTIES
+            PASS_REGULAR_EXPRESSION "Presented 2 frame")
+    endif()
 
     add_executable(bg_diagnostic_tests tests/test_bg_diagnostic.c)
     target_link_libraries(bg_diagnostic_tests PRIVATE gbcore)

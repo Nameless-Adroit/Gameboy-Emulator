@@ -7,6 +7,12 @@ Dates use Africa/Dar_es_Salaam time.
 
 ## Current status
 
+- Optional bounded graphics tracing follows one pixel from bus accesses to PPU
+  output and SDL presentation; compile-time and runtime defaults are off.
+
+- Optional SDL2 `gb_sdl` frontend presents completed frames with integer nearest-
+  neighbor scaling; the core and headless build remain SDL-independent.
+
 - CPU bus accesses and internal cycles share one hardware clock; raw memory
   reads/writes never advance time.
 - Timer/DIV and basic PPU register/timing/interrupt behavior are connected to it.
@@ -14,7 +20,8 @@ Dates use Africa/Dar_es_Salaam time.
   both maps/addressing modes, BGP and SCX/SCY, into the 160 × 144 framebuffer.
 - Cartridge support remains limited to fixed 32 KiB mapping without external RAM.
 - The cartridge loader defect has been fixed by rejecting unsupported RAM-bearing
-  mapper types. The current Debug and ASan/UBSan CTest suites pass (7/7 each);
+  mapper types. The seven core suites pass; SDL + trace suites also pass (11/11 in Debug
+  and ASan/UBSan);
   LeakSanitizer is unavailable in this traced execution environment.
 
 ## 2026-10-28 — CPU clock refactor (previous completed work)
@@ -240,3 +247,153 @@ cmake --build /tmp/gb-ppu-sanitized -j2
 ASAN_OPTIONS=detect_leaks=0 ctest --test-dir /tmp/gb-ppu-sanitized --output-on-failure
 ./build/bg_diagnostic_tests tests/diagnostic/background.gb build/background.pgm
 ```
+
+## 2026-10-28 — Optional minimal SDL2 frontend
+
+### Changes
+
+- Added an opt-in `GB_ENABLE_SDL` CMake option, `gb_sdl_frontend` presentation
+  library and separate `gb_sdl` executable. Default headless builds need no SDL.
+- Kept CPU, PPU, memory, timer and the original headless runner unchanged.
+  `gbcore` has no SDL dependency; SDL headers/types stay in `src/frontend/`.
+- Added a resizable 3× window, explicit nearest-neighbor texture filtering,
+  integer logical scaling and letterboxing. The frontend converts existing
+  shade IDs 0–3 to opaque ARGB8888 host pixels without modifying PPU pixels.
+- Present completed frames only when the runner observes `frame_ready`, then
+  acknowledge the latch after a successful upload/draw. Expose/resize events
+  redraw the cached uploaded texture instead of sampling a partial next frame.
+- Added Close/Escape handling, bounded event polling independent of VBlank,
+  partial-startup cleanup and reverse-order shutdown. STOP keeps the display
+  responsive; locked CPUs report failure. No joypad mapping was added.
+- Host-only pacing compares elapsed performance-counter time with existing CPU
+  T-cycle totals. It sleeps without ticking devices, skipping CPU instructions,
+  changing PPU mode lengths or tying hardware clocks to monitor refresh.
+- Added detailed inline comments and [SDL_FRONTEND.md](SDL_FRONTEND.md) covering
+  Ubuntu setup, each function, lifecycle, rendering format and timing separation.
+  Linked build/run instructions from README.
+
+### Verification
+
+- Default SDL-disabled Debug build: **7/7 existing suites passed**. Verified
+  `build/gb` links no SDL library.
+- SDL-enabled Debug build: **9/9 CTest suites passed**, including all seven
+  existing suites, `SDL_Frontend_Tests` and `SDL_Diagnostic_Smoke`.
+- SDL-enabled ASan/UBSan build: **9/9 passed**, no sanitizer diagnostics.
+  Used `ASAN_OPTIONS=detect_leaks=0` because LeakSanitizer cannot operate in this
+  traced environment. Existing CPU integer-conversion warnings remain; no new
+  frontend compiler warnings were emitted.
+- Frontend tests exercise actual SDL objects with dummy video/software rendering:
+  four shade conversions, exact 3× output pixel replication, nearest texture
+  mode, integer logical scaling, read-only PPU access, cached redraws, Escape,
+  SDL_QUIT, window-close events and repeat-safe cleanup.
+- End-to-end smoke test runs the existing diagnostic ROM and successfully
+  presents two frame-ready images before clean exit.
+- Manual subprocess checks: nonexistent ROM, invalid negative frame limit and
+  deliberately unavailable SDL video driver each exit with status 1 and an
+  informative error, without hanging.
+- `git diff --check`: passed. The separate 15-ROM batch was not rerun for this
+  frontend-only change; previous results remain in earlier entries.
+
+### Environment and limitations
+
+SDL2 development files were absent. The first dependency download was blocked
+by sandbox networking; after approval, downloaded Ubuntu SDL2 2.32.10 packages
+and the missing libXss dependency into `/tmp/gb-sdl-deps/`, without installing
+system packages. Local extracted-package builds used their CMake prefix,
+architecture-header include path and runtime library path. Initial dependency
+build failures were resolved by providing those relocated headers/runtime files.
+Actual Ubuntu users can install `libsdl2-dev` normally as documented.
+
+All SDL tests used the dummy video backend; desktop/GPU window presentation has
+not been visually tested. No SDL frontend changes were made to the existing
+hardware approximations. The frontend retains the last image while LCD is off
+or CPU is stopped, until a new completed frame or host close event. Host pacing
+is basic, with no audio synchronization. SDL 2.0.12 or newer is required.
+
+For a normal Ubuntu installation:
+
+```sh
+sudo apt-get install libsdl2-dev
+cmake -S . -B build -DGB_ENABLE_SDL=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j2
+./build/gb_sdl tests/diagnostic/background.gb
+ctest --test-dir build --output-on-failure
+```
+
+## 2026-10-28 — Optional Graphics Pipeline Trace Mode
+
+### Changes
+
+- Added `GB_ENABLE_GRAPHICS_TRACE` (default OFF) and runtime `--graphics-trace`,
+  `--trace-pixel X,Y` and `--trace-frames N` options to headless and SDL runners.
+  Defaults are pixel (20,40), two rendering passes. Instrumented builds also
+  remain silent unless runtime tracing is requested.
+- Added caller-owned trace state with compile-guarded observer pointers in
+  Memory/PPU. The default build has no trace hooks/counters in hot paths;
+  `cpu_fetch` aliases the existing timed read when trace support is compiled out.
+- Trace records cover bounded ROM data reads, CPU VRAM/register writes with
+  instruction-start PC, actual selected map/tile/row bytes and decode result,
+  BGP-mapped framebuffer shade, VBlank and successfully presented SDL ARGB.
+  Opcode/immediate fetches are excluded from ROM data records.
+- Observer timestamps accumulate only existing `memory_tick()` durations. PPU
+  records include the exact intra-batch dot offset, preserving correlation with
+  CPU writes and host presentation without adding any simulated time.
+- Added one-based rendering-pass IDs across frame wraps and LCD restarts;
+  SDL uses the saved completed-pass ID. Blank sources and raw bus access are
+  explicitly labeled rather than given invented tile or CPU provenance.
+- Enforced category quotas and a 256-record global event cap plus START header.
+  Coordinate/frame parsing rejects invalid values. Detaching resets observer
+  references safely. SDL/core ownership and headless behavior remain intact.
+- Added [GRAPHICS_TRACE.md](GRAPHICS_TRACE.md): actual function map, data-flow
+  diagram, options, bounds, timing semantics and actual diagnostic pixel example.
+  It distinguishes Game Boy CPU copies from direct C loader/PPU/SDL work and
+  explains the lack of register taint tracking and pixel-FIFO accuracy.
+
+### Results
+
+- Trace compiled out, existing SDL-enabled Debug build: **9/9 passed**.
+- Trace + SDL enabled, Debug: **11/11 passed**, including new
+  `Graphics_Trace_Tests` and `SDL_Graphics_Trace` suites.
+- Trace + SDL enabled, ASan/UBSan: **11/11 passed**, no sanitizer diagnostics.
+  `ASAN_OPTIONS=detect_leaks=0` retains the previously documented environment
+  limitation: LeakSanitizer cannot run under this session's tracing setup.
+  Existing CPU integer-conversion compiler warnings remain unchanged.
+- Separate trace-enabled SDL-disabled Debug configuration: **8/8 passed**.
+- Trace tests verify signed tile addressing, scrolling and palette provenance;
+  exact pixel timestamps inside large clock batches; PC/raw-source labels;
+  LCD restart/blank source records; frame/category/global bounds; parser
+  validation and observer detachment. A two-frame diagnostic run compares
+  traced/untraced CPU, bus, timer, PPU and framebuffer state/cycle results.
+- End-to-end SDL trace confirms framebuffer shade 0 -> ARGB FFFFFFFF at (20,40).
+  A separate CLI check at (60,40) confirms nonwhite ARGB FFAAAAAA.
+- Headless CLI trace completes successfully with bounded records and no SDL
+  presentation records. A compiled-out CLI request returns a clear build-option
+  error. `nm` inspection confirms the default PPU object has no trace symbols.
+- Actual diagnostic trace: LCD enable at cycle 57652, selected pixel committed at
+  76144, VBlank and SDL presentation at 123316. Captured records are in the
+  worked example in GRAPHICS_TRACE.md.
+- `git diff --check`: passed. The 15-ROM batch was not rerun for this observer
+  feature; all registered regression suites above were rerun.
+
+### Limits
+
+The existing fixed scanline model remains unchanged; no pixel FIFO, rendering
+feature, input, or new hardware timing was added. Category caps intentionally
+omit most bus traffic and do not constitute a full instruction/access trace.
+Direct array modifications bypass bus records. SDL checks used dummy/software
+presentation, not a physical monitor. Library attachment is intended immediately
+following memory initialization, before execution; its cycle epoch begins there.
+
+## 2026-10-28 — Graphics log startup diagnosis
+
+- Inspected `build/trace/graphics.log`: it contains the compiled-out tracing
+  error, rather than pipeline records. The ordinary `build` cache has graphics
+  tracing OFF; the separate `build/trace` cache has it ON.
+- Reproduced both paths using SDL dummy/software with the diagnostic ROM:
+  `build/gb_sdl --graphics-trace` exits 1 with that exact message;
+  `build/trace/gb_sdl --graphics-trace` exits 0 and emits pixel/SDL records.
+- The evidence indicates the ordinary executable was run with output redirected
+  into the trace directory. Redirecting stderr changes the log destination, not
+  the executable or build configuration. No code change or rebuild was needed.
+- Preserved the user's existing log. Use `./build/trace/gb_sdl` to generate the
+  replacement log; add `--frames 2` for a finite verification session.

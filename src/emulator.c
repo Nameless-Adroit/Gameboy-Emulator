@@ -3,15 +3,22 @@
 #include <stdbool.h>
 #include "memory.h"
 #include "cpu.h"
+#include "graphics_trace.h"
 
 int main(int argc, char **argv)
 {
     if (argc < 2)
     {
-        printf("Usage: %s <rom_file.gb>\n", argv[0]);
+        printf("Usage: %s <rom_file.gb> [--graphics-trace] [--trace-pixel X,Y] [--trace-frames N]\n", argv[0]);
         return 1;
     }
 
+    GraphicsTraceOptions trace_options;
+    graphics_trace_options_init(&trace_options);
+    for (int i = 2; i < argc; ++i)
+        if (graphics_trace_option(&trace_options, argc, argv, &i) < 0) return 1;
+
+    GraphicsTrace trace;
     CPU cpu;
     Memory memory;
 
@@ -24,6 +31,7 @@ int main(int argc, char **argv)
 
     // 2. Initialize CPU (Ensure PC is set to 0x0100 inside this function!)
     reset_cpu(&cpu, &memory);
+    if (!graphics_trace_start(&trace, &memory, &trace_options, stderr)) return 1;
 
     // 3. Clock the CPU and timer, including idle cycles while HALTed.
     printf("Starting CPU Loop...\n\n");
