@@ -1,8 +1,14 @@
 # Game Boy CPU learning project
 
+See [PROGRESS.md](PROGRESS.md) for the development log, verification results and
+remaining hardware gaps.
+See [PPU.md](PPU.md) for PPU functions, bus/CPU communication, timing contracts
+and hardware approximations.
+
 This revision implements all **244 ordinary base instructions**, the **CB prefix
 and all 256 CB instructions**, and lock-up handling for the 11 illegal base bytes.
-It is a CPU core with a flat test bus, not yet a complete Game Boy emulator.
+It includes a mapped memory bus, timer and basic DMG background renderer; it is
+not yet a complete Game Boy emulator.
 See [REVIEW.md](REVIEW.md) for the original-code assessment and
 [OPCODE_AUDIT.md](OPCODE_AUDIT.md) for all 512 opcode-table entries.
 
@@ -64,15 +70,27 @@ STOP/HALT vectors are excluded and replaced by explicit local state tests.
 
 ## Hardware still needed
 
-The bus is flat, writable RAM for CPU tests. It does not yet enforce cartridge
-ROM protection, RAM mirrors, unmapped regions or memory-mapped device behavior.
+The bus maps cartridge ROM, VRAM, WRAM and its echo, OAM, HRAM and I/O.
+ROM writes are protected; timer and LCD registers have device-specific handlers.
+CPU access restrictions during PPU modes and DMA are not yet implemented.
 The ROM loader rejects files larger than 32 KiB instead of silently truncating.
 A 32 KiB file fitting the loader is not a guarantee of cartridge compatibility.
 
 Timer/DIV is implemented and continues clocking during HALT, including timer
-interrupt requests. No PPU, framebuffer, DMA, full MBC, joypad, APU or accurate
-serial device is implemented. The runner prints the common serial-test convention
-and stops on STOP/lock-up or the step limit.
+interrupt requests. The PPU implements LCD registers, 456-dot scanlines, 154-line
+frames, VBlank and rising-edge STAT interrupts. It shares `memory_tick()` with
+the timer; raw bus access remains untimed. LCD reset starts disabled.
+
+The PPU uses fixed timing: mode 3 has a 172-dot duration.
+Background scanlines are drawn into the framebuffer at the end of mode 3, using
+bus-owned VRAM, 2bpp tiles, both tile maps/addressing modes, BGP and SCX/SCY.
+`frame_ready` signals that all visible rows have completed at VBlank. Variable mode 3
+timing, LCD startup quirks, the line-153 LY quirk and DMG STAT-write glitch are
+not implemented.
+
+No DMA, full MBC, joypad, APU or accurate serial device is implemented. The runner
+prints the common serial-test convention and stops on STOP/lock-up or the step
+limit. Run `./build/ppu_tests` for PPU register, timing, interrupt and clock tests.
 
 CPU bus accesses consume four T-cycles each; internal cycles occur explicitly
 between accesses. Bus reads/writes sample or commit at the end of their machine
@@ -81,3 +99,14 @@ OAM corruption, detailed STOP behavior (DIV/input quirks,
 nonzero second byte), and CGB KEY1 speed switching are not implemented. Reset
 uses the existing conventional DMG post-boot CPU registers, not a boot ROM or
 complete post-boot peripheral initialization.
+
+## Background diagnostic
+
+[Diagnostic ROM and generation instructions](tests/diagnostic/README.md) provide
+shade bars, checkerboard and X tiles. Export the actual CPU-rendered framebuffer:
+
+```sh
+./build/bg_diagnostic_tests tests/diagnostic/background.gb build/background.pgm
+```
+
+![Background diagnostic preview](tests/diagnostic/background.png)

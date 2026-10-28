@@ -97,6 +97,7 @@ add_library(gbcore STATIC
     src/memory.c
     src/cartridge.c
     src/timer.c
+    src/ppu.c
 )
 
 # Headers accessible to applications and tests.
@@ -121,6 +122,19 @@ target_link_libraries(gb PRIVATE gbcore)
 # ------------------------------------------------------------
 
 if(BUILD_TESTING)
+
+    add_executable(bg_diagnostic_tests tests/test_bg_diagnostic.c)
+    target_link_libraries(bg_diagnostic_tests PRIVATE gbcore)
+    add_test(NAME BG_Diagnostic_ROM COMMAND bg_diagnostic_tests
+        "${PROJECT_SOURCE_DIR}/tests/diagnostic/background.gb")
+
+    add_executable(ppu_render_tests tests/test_ppu_render.c)
+    target_link_libraries(ppu_render_tests PRIVATE gbcore)
+    add_test(NAME PPU_Render_Tests COMMAND ppu_render_tests)
+
+    add_executable(ppu_tests tests/test_ppu.c)
+    target_link_libraries(ppu_tests PRIVATE gbcore)
+    add_test(NAME PPU_Tests COMMAND ppu_tests)
 
     add_executable(timer_tests tests/test_timer.c)
     target_link_libraries(timer_tests PRIVATE gbcore)

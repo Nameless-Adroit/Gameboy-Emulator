@@ -11,6 +11,8 @@ void memory_init(Memory *memory)
 {
     memset(memory, 0, sizeof(*memory));
     cartridge_init(&memory->cartridge);
+    ppu_init(&memory->ppu);
+    ppu_attach_vram(&memory->ppu, memory->vram);
 }
 
 // ------------------------------------------------------------
@@ -57,6 +59,11 @@ uint8_t memory_read(Memory *memory, uint16_t address)
     // FF04-FF07: Timer registers have hardware-specific behavior.
     if (address >= 0xFF04 && address <= 0xFF07) {
         return timer_read(&memory->timer, address);
+    }
+
+    // LCD registers; FF46 is reserved for the future DMA controller.
+    if (address >= 0xFF40 && address <= 0xFF4B && address != 0xFF46) {
+        return ppu_read(&memory->ppu, address);
     }
 
     // FF00-FF7F: Hardware I/O registers
@@ -129,6 +136,13 @@ void memory_write(Memory *memory,
         return;
     }
 
+    // Writes may request STAT immediately but never advance the clock.
+    if (address >= 0xFF40 && address <= 0xFF4B && address != 0xFF46) {
+        ppu_write(&memory->ppu, address, value);
+        ppu_tick(&memory->ppu, 0, &memory->io[0x0F]);
+        return;
+    }
+
     // FF00-FF7F: Hardware I/O registers
     if (address <= 0xFF7F) {
         memory->io[address - 0xFF00] = value;
@@ -157,4 +171,6 @@ void memory_tick(Memory *memory, unsigned t_cycles)
 {
     // FF0F is IF; the timer requests its interrupt by setting bit 2.
     timer_tick(&memory->timer, &memory->io[0x0F], t_cycles);
+    // DMG: one PPU dot per CPU T-cycle, including HALT idle time.
+    ppu_tick(&memory->ppu, t_cycles, &memory->io[0x0F]);
 }

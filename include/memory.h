@@ -3,6 +3,7 @@
 
 #include "cartridge.h"
 #include "timer.h"
+#include "ppu.h"
 #include <stdint.h>
 
 // Original Game Boy (DMG) memory regions
@@ -27,6 +28,7 @@ typedef struct Memory
     uint8_t ie;
 
     Timer timer;
+    PPU ppu;
 
 } Memory;
 

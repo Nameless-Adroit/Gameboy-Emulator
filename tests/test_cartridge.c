@@ -88,6 +88,15 @@ int main(void)
     cartridge_write(&cartridge, 0x2000, 2);
     assert(cartridge_read(&cartridge, 0x4000) == 0x56);
 
+    // RAM-bearing mapper types cannot be supported merely by declaring no RAM.
+    // Reject both 02 (MBC1+RAM) and 03 (MBC1+RAM+battery), preserving state.
+    for (uint8_t type = 2; type <= 3; ++type) {
+        rom[0x147] = type;
+        write_fixture(path, rom, sizeof(rom), false);
+        assert(!load_rom(&cartridge, path));
+        assert(cartridge.header.type == 1 && cartridge_read(&cartridge, 0) == 0x12);
+    }
+
     // Failed replacement loads preserve the previously loaded ROM and header.
     rom[0x147] = 0;
     for (size_t offset = 0x147; offset <= 0x149; ++offset) {
