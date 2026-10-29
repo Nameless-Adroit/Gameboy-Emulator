@@ -71,6 +71,7 @@ void ppu_decode_tile(const uint8_t tile[16], uint8_t pixels[8][8])
 
 /* Render a whole row at the end of mode 3. VRAM and LCD registers are sampled
  * here, not per pixel: raster effects within a scanline are an approximation.
+ * Compose the opaque Window over BG using the same tile fetch/decode path.
  * Reads bypass the CPU bus and never advance time. */
 static void render_background_line(PPU *ppu)
 {
@@ -84,16 +85,26 @@ static void render_background_line(PPU *ppu)
 #endif
         return;
     }
-    unsigned map = (ppu->lcdc & 0x08) ? 0x1C00u : 0x1800u;
-    unsigned y = ((unsigned)ppu->scy + ppu->ly) & 0xFFu;
+    unsigned bg_map = (ppu->lcdc & 0x08) ? 0x1C00u : 0x1800u;
+    unsigned bg_y = ((unsigned)ppu->scy + ppu->ly) & 0xFFu;
+    int window_left = (int)ppu->wx - 7; // Signed arithmetic preserves left clipping.
+    bool window_visible = (ppu->lcdc & 0x20) && ppu->window_y_triggered &&
+                          ppu->wx <= 166;
+    unsigned window_map = (ppu->lcdc & 0x40) ? 0x1C00u : 0x1800u;
     uint8_t row[8];
 #ifdef GB_GRAPHICS_TRACE
     unsigned source_map = 0, source_id = 0, source_row = 0;
 #endif
     for (unsigned x = 0; x < LCD_WIDTH; ++x) {
-        unsigned bg_x = ((unsigned)ppu->scx + x) & 0xFFu;
-        if (x == 0 || (bg_x & 7u) == 0) {
-            uint8_t id = ppu->vram[map + (y / 8) * 32 + bg_x / 8];
+        bool in_window = window_visible && (int)x >= window_left;
+        unsigned tile_x = in_window ? (unsigned)((int)x - window_left)
+                                    : ((unsigned)ppu->scx + x) & 0xFFu;
+        unsigned y = in_window ? ppu->window_line : bg_y;
+        unsigned map = in_window ? window_map : bg_map;
+        // The Window switch starts at local x=0 (or the screen's clipped edge),
+        // so it reloads the row cache even when it interrupts a partial BG tile.
+        if (x == 0 || (tile_x & 7u) == 0) {
+            uint8_t id = ppu->vram[map + (y / 8) * 32 + tile_x / 8];
             unsigned tile_offset;
             if (ppu->lcdc & 0x10) {
                 tile_offset = (unsigned)id * 16; // Unsigned, base 8000.
@@ -103,21 +114,24 @@ static void render_background_line(PPU *ppu)
             }
             unsigned offset = tile_offset + (y & 7u) * 2;
 #ifdef GB_GRAPHICS_TRACE
-            source_map = 0x8000 + map + (y / 8) * 32 + bg_x / 8;
+            source_map = 0x8000 + map + (y / 8) * 32 + tile_x / 8;
             source_id = id;
             source_row = 0x8000 + offset;
 #endif
             ppu_decode_tile_row(ppu->vram[offset], ppu->vram[offset + 1], row);
         }
-        unsigned color = row[bg_x & 7u];
+        unsigned color = row[tile_x & 7u];
         output[x] = (uint8_t)(((unsigned)ppu->bgp >> (color * 2)) & 3u);
 #ifdef GB_GRAPHICS_TRACE
         if (ppu->trace && ppu->ly == ppu->trace->y && x == ppu->trace->x)
             graphics_trace_pixel(ppu->trace, source_map, source_id, source_row,
                 ppu->vram[source_row - 0x8000], ppu->vram[source_row - 0x8000 + 1],
-                color, ppu->bgp, output[x]);
+                color, ppu->bgp, output[x], in_window);
 #endif
     }
+    // A visible span always contains at least one pixel (WX<=166). Disabled
+    // BG, detached VRAM and hidden/offscreen Window paths never increment it.
+    if (window_visible) ++ppu->window_line;
 }
 
 void ppu_tick(PPU *ppu, unsigned dots, uint8_t *interrupt_flags)
@@ -137,11 +151,18 @@ void ppu_tick(PPU *ppu, unsigned dots, uint8_t *interrupt_flags)
                 ppu->dot = 0;
                 if (++ppu->ly == LINES_PER_FRAME) {
                     ppu->ly = 0;
+                    ppu->window_line = 0;
+                    ppu->window_y_triggered = false;
 #ifdef GB_GRAPHICS_TRACE
                     if (ppu->trace) graphics_trace_frame_start(ppu->trace);
 #endif
                 }
+                // WY is a start-of-scanline condition, independent of SCY,
+                // WX and Window enable. Later WY writes cannot unlatch it.
+                if (ppu->ly < LCD_HEIGHT && ppu->ly == ppu->wy)
+                    ppu->window_y_triggered = true;
                 if (ppu->ly == LCD_HEIGHT) {
+                    ppu->window_y_triggered = false;
                     ppu->frame_ready = true;
 #ifdef GB_GRAPHICS_TRACE
                     if (ppu->trace) graphics_trace_vblank(ppu->trace);
@@ -183,6 +204,8 @@ void ppu_write(PPU *ppu, uint16_t address, uint8_t value)
         if (was_enabled != ((value & LCD_ENABLE) != 0)) {
             ppu->dot = 0;
             ppu->ly = 0;
+            ppu->window_line = 0;
+            ppu->window_y_triggered = (value & LCD_ENABLE) && ppu->wy == 0;
             ppu->frame_ready = false;
 #ifdef GB_GRAPHICS_TRACE
             if ((value & LCD_ENABLE) && ppu->trace)

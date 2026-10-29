@@ -16,11 +16,12 @@ Dates use Africa/Dar_es_Salaam time.
 - CPU bus accesses and internal cycles share one hardware clock; raw memory
   reads/writes never advance time.
 - Timer/DIV and basic PPU register/timing/interrupt behavior are connected to it.
-- Basic DMG background scanlines render 2bpp tiles from bus-owned VRAM, with
-  both maps/addressing modes, BGP and SCX/SCY, into the 160 × 144 framebuffer.
+- DMG background and Window scanlines share 2bpp decoding, maps/addressing modes,
+  BGP and the 160 × 144 framebuffer. Window positioning/counters are independent
+  of BG scrolling; fixed timing and documented hardware quirks remain simplified.
 - Cartridge support remains limited to fixed 32 KiB mapping without external RAM.
 - The cartridge loader defect has been fixed by rejecting unsupported RAM-bearing
-  mapper types. The seven core suites pass; SDL + trace suites also pass (11/11 in Debug
+  mapper types. The nine headless suites pass; SDL + trace suites also pass (14/14 in Debug
   and ASan/UBSan);
   LeakSanitizer is unavailable in this traced execution environment.
 
@@ -397,3 +398,84 @@ following memory initialization, before execution; its cycle epoch begins there.
   the executable or build configuration. No code change or rebuild was needed.
 - Preserved the user's existing log. Use `./build/trace/gb_sdl` to generate the
   replacement log; add `--frames 2` for a finite verification session.
+
+## 2026-10-28 — DMG Window layer and scrolling diagnostic
+
+### Implementation
+
+- Added Window composition to the existing scanline renderer, reusing tile-row
+  decoding, signed/unsigned tile addressing, BGP mapping and framebuffer storage.
+  The Window uses LCDC bit 6 for its own map and bit 5 for enable; DMG bit 0 gates
+  both background and Window. Color zero remains opaque.
+- Implemented signed `WX-7` positioning, left clipping with retained local tile
+  coordinates, right-edge clipping and independent Window X/Y map coordinates.
+  SCX/SCY only affect the background.
+- Added `window_y_triggered`, latched when WY matches LY at visible line start,
+  cleared at VBlank; DMG Window enable toggles and later WY writes do not undo
+  the match. LCD transitions reset Window state.
+- Added `window_line`, incremented once only after a scanline contains actual
+  Window pixels. Offscreen/disabled/master-disabled/detached rows pause it;
+  frame wrap and LCD reset restart it. White Window rows still count.
+- Preserved fixed mode boundaries and existing CPU, bus, timer, interrupt and
+  SDL behavior. Window rendering does not call a clock function.
+- Graphics trace now reports the final composed pixel's layer and source once,
+  including Window map/tile/row metadata instead of obscured BG provenance.
+- Added `PPU_Window_Tests`, `Window_Diagnostic_ROM` and optional SDL Window smoke
+  coverage through the existing CMake/CTest structure. Kept C99 compatibility.
+
+### Diagnostic and documentation
+
+- Added `tests/diagnostic/window.gb` and its standard-library-only generator.
+  Actual CPU instructions load seven tiles/two maps, set WX=31/WY=80 and enable
+  the Window. Its VBlank ISR increments SCX once per frame while the bordered
+  W-pattern overlay remains fixed. The original diagnostic remains unchanged.
+- Added an end-to-end test checking every pixel across three frames (SCX=0,1,2),
+  64 Window rows per frame and correct frame timing. Optional PGM export uses
+  the actual CPU-produced framebuffer.
+- Exported and visually inspected [window.png](tests/diagnostic/window.png), a
+  nearest-neighbor 4× preview of the third test frame. Verified ROM generation
+  is byte-for-byte reproducible and header/global checksums are valid.
+- Added [WINDOW.md](WINDOW.md) with coordinate/counter rules, architecture,
+  examples, references and explicit timing gaps. Updated PPU, trace, README
+  and diagnostic documentation.
+
+### Regression results
+
+- SDL-enabled Debug without trace: **12/12 passed**.
+- SDL + trace-enabled Debug: **14/14 passed**.
+- SDL + trace-enabled ASan/UBSan: **14/14 passed**, no sanitizer diagnostics.
+  Used `ASAN_OPTIONS=detect_leaks=0` for the previously documented ptrace/LSan
+  environment limitation. Existing CPU integer-conversion compiler warnings
+  remain; no new Window compiler warnings were emitted.
+- Separate SDL-disabled, trace-disabled headless Debug build: **9/9 passed**.
+- Reran all 11 individual CPU instruction ROMs, instruction timing ROM and all
+  three individual memory timing ROMs: **15/15 passed**. Logs are temporarily
+  under `/tmp/gb-background-regressions/window/`.
+- Window tests compare 800 full-frame combinations, covering both maps, both
+  addressing modes, ten WX positions (0/1/6/7/8/23/165/166/167/255), five WY
+  values (0/5/143/144/255), fine/wrapping BG scroll and two palettes. Added
+  counter pause/resume, enable gating, early/late WY matching, opacity, detached
+  VRAM, reset/frame-wrap, batch equivalence and unchanged mode-boundary checks.
+- Actual traced diagnostic pixel (40,88): Window map 9C22, tile 06, row 8060,
+  bytes 81/81, color/shade 3, SDL ARGB FF000000 across both sampled frames.
+  Trace unit coverage verifies one Window pixel record with correct provenance.
+- `git diff --check`: passed. No current test failures.
+
+### Remaining hardware inaccuracies
+
+Mode 3 is still a fixed 172 dots: Window activation/fetcher penalties are not
+modeled. Each composed row samples state at dot 252; repeated starts and
+pixel-level WX/WY/LCDC changes are not modeled. WX=0 uses geometric clipping
+instead of SCX-dependent hardware behavior, and WX=166 uses one-pixel clipping
+instead of the DMG full-width/vertical-offset quirk. Disabled-Window glitch
+pixels, FIFO effects and existing LCD startup/LY/STAT/VRAM-access gaps remain.
+No sprites, APU or cycle-accurate pixel FIFO was added. SDL tests used the
+headless dummy/software backend; no physical DMG hardware was tested.
+
+Run the new diagnostic:
+
+```sh
+cmake --build build -j2
+./build/gb_sdl tests/diagnostic/window.gb
+./build/window_diagnostic_tests tests/diagnostic/window.gb build/window.pgm
+```

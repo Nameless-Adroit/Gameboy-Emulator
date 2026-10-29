@@ -7,7 +7,7 @@ and hardware approximations.
 
 This revision implements all **244 ordinary base instructions**, the **CB prefix
 and all 256 CB instructions**, and lock-up handling for the 11 illegal base bytes.
-It includes a mapped memory bus, timer and basic DMG background renderer; it is
+It includes a mapped memory bus, timer and basic DMG background/Window renderer; it is
 not yet a complete Game Boy emulator.
 See [REVIEW.md](REVIEW.md) for the original-code assessment and
 [OPCODE_AUDIT.md](OPCODE_AUDIT.md) for all 512 opcode-table entries.
@@ -134,3 +134,16 @@ and VRAM writes through tile decoding, BGP, framebuffer and SDL presentation.
 It defaults to pixel `(20,40)` and bounded output over two rendering passes.
 See [GRAPHICS_TRACE.md](GRAPHICS_TRACE.md) for build flags, the flow diagram,
 actual diagnostic records and a worked pixel example.
+
+## Window diagnostic
+
+The Window overlays its own tile map at `WX-7, WY` and uses an internal row
+counter independent of SCX/SCY. Run a moving background behind a fixed panel:
+
+```sh
+cmake --build build
+./build/gb_sdl tests/diagnostic/window.gb
+```
+
+[WINDOW.md](WINDOW.md) explains placement, counter behavior, tests and the
+remaining fixed-timing and hardware-quirk approximations.

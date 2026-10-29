@@ -102,6 +102,8 @@ monitor refreshes.
   rules still apply: for example, a write to read-only LY is logged but ignored.
 - `PIXEL`: the actual map address, tile ID, first tile-row byte address, both row
   bytes, decoded color ID, BGP, mapped shade and assigned framebuffer value.
+  `layer=background` or `layer=window` identifies the final composed layer;
+  a Window-covered pixel is logged once with Window provenance.
   `row_address` is a CPU-visible VRAM address, not a host pointer. Its following
   byte is at `row_address+1`.
 - A blank `PIXEL` explains `BG-disabled` or `VRAM-detached` and uses `n/a` for

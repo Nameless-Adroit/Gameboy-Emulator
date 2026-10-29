@@ -165,7 +165,11 @@ if(BUILD_TESTING)
         add_test(NAME SDL_Frontend_Tests COMMAND sdl_frontend_tests)
         add_test(NAME SDL_Diagnostic_Smoke COMMAND gb_sdl
             "${PROJECT_SOURCE_DIR}/tests/diagnostic/background.gb" --frames 2)
-        set_tests_properties(SDL_Frontend_Tests SDL_Diagnostic_Smoke PROPERTIES
+        add_test(NAME SDL_Window_Smoke COMMAND gb_sdl
+            "${PROJECT_SOURCE_DIR}/tests/diagnostic/window.gb" --frames 3)
+        set_tests_properties(SDL_Window_Smoke PROPERTIES
+            PASS_REGULAR_EXPRESSION "Presented 3 frame")
+        set_tests_properties(SDL_Frontend_Tests SDL_Diagnostic_Smoke SDL_Window_Smoke PROPERTIES
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
             TIMEOUT 15)
         set_tests_properties(SDL_Diagnostic_Smoke PROPERTIES
@@ -176,6 +180,15 @@ if(BUILD_TESTING)
     target_link_libraries(bg_diagnostic_tests PRIVATE gbcore)
     add_test(NAME BG_Diagnostic_ROM COMMAND bg_diagnostic_tests
         "${PROJECT_SOURCE_DIR}/tests/diagnostic/background.gb")
+
+    add_executable(window_diagnostic_tests tests/test_window_diagnostic.c)
+    target_link_libraries(window_diagnostic_tests PRIVATE gbcore)
+    add_test(NAME Window_Diagnostic_ROM COMMAND window_diagnostic_tests
+        "${PROJECT_SOURCE_DIR}/tests/diagnostic/window.gb")
+
+    add_executable(ppu_window_tests tests/test_ppu_window.c)
+    target_link_libraries(ppu_window_tests PRIVATE gbcore)
+    add_test(NAME PPU_Window_Tests COMMAND ppu_window_tests)
 
     add_executable(ppu_render_tests tests/test_ppu_render.c)
     target_link_libraries(ppu_render_tests PRIVATE gbcore)

@@ -1,9 +1,10 @@
 # DMG PPU timing and bus integration
 
-The PPU is a C99 register, timing, interrupt and basic background-rendering
+The PPU is a C99 register, timing, interrupt and basic background/Window-rendering
 component. It owns LCD state and the 160 × 144 framebuffer; the memory bus owns
 address decoding, VRAM, OAM and IF. The CPU initiates elapsed hardware time.
-Sprites, the window layer, SDL and a cycle-accurate pixel FIFO remain out of scope.
+Sprites, APU and a cycle-accurate pixel FIFO remain out of scope. SDL presentation
+is a separate optional frontend. See [WINDOW.md](WINDOW.md) for Window behavior.
 
 ## How the CPU communicates with the PPU
 
@@ -61,7 +62,7 @@ VRAM binding renders white. After copying/moving a `Memory` instance, rebind wit
 | `ppu_attach_vram()` | Binds a read-only view of bus-owned 8 KiB VRAM, or detaches with NULL | Supplies rendering data without bus ownership, allocation or a circular dependency |
 | `ppu_decode_tile_row()` | Decodes two bitplane bytes into eight color IDs, left to right | Isolates the pure, testable DMG 2bpp format from palettes and timing |
 | `ppu_decode_tile()` | Decodes all eight rows of a 16-byte tile | Provides a complete tile decoder using the same row implementation |
-| `render_background_line()` (private) | Resolves map/tile addresses, scrolling, 2bpp color IDs and BGP shades into the current framebuffer row | Keeps scanline rendering separate from mode/interrupt logic and consumes no simulated time |
+| `render_background_line()` (private) | Composes BG/Window map coordinates, shared 2bpp decoding and BGP shades into the current framebuffer row | Keeps scanline rendering separate from mode/interrupt logic and consumes no simulated time |
 | `ppu_read()` | Reads registers, forces STAT bit 7 high, returns FF for unhandled addresses | Exposes a const, untimed register interface without exposing bus layout |
 | `ppu_write()` | Writes permitted register fields, ignores LY writes, handles LCD enable transitions, then updates STAT | Enforces register access rules and captures interrupt edges caused by writes |
 | `memory_init()` | Initializes the embedded PPU alongside cartridge/bus state and attaches VRAM | Gives every emulator/test instance its own initialized hardware |
@@ -84,7 +85,7 @@ The current steady-state schedule is:
 
 A line lasts 456 dots and a frame 70,224 dots. Entering LY 144 requests IF bit 0
 and latches `frame_ready`. A consumer clears `frame_ready`; clearing it does not
-change interrupt requests. All 144 visible background rows have been drawn when it becomes true. The
+change interrupt requests. All 144 visible composed rows have been drawn when it becomes true. The
 framebuffer stores palette-mapped shades 0 (white), 1 (light gray), 2 (dark gray)
 and 3 (black), rather than RGB colors.
 These baseline timings follow [Pan Docs' rendering overview](https://github.com/gbdev/pandocs/blob/master/src/Rendering.md).
@@ -117,9 +118,11 @@ bit remains set does not restart the scanline.
 - **Rendering granularity:** a whole scanline is drawn at dot 252, sampling the
   current VRAM, SCX/SCY, LCDC and BGP state then. Mid-scanline changes therefore
   affect the whole row; pixel-accurate raster effects are not reproduced.
-- **Layers:** window and sprites are absent; WX/WY and object palette registers
-  store values but have no rendering effect. LCDC window/object bits do not add
-  these layers. LCD-off white and disabled-BG white both use framebuffer shade 0.
+- **Window:** basic placement and the internal line counter are implemented, but
+  Window fetch penalties, pixel-FIFO restart effects and WX=0/166 hardware quirks
+  are not. See [WINDOW.md](WINDOW.md) for precise modeled behavior.
+- **Sprites:** absent; object palettes and LCDC object bits have no rendering
+  effect. LCD-off white and disabled-BG/Window white both use shade 0.
 - **CPU bus phase:** accesses sample/commit at four-T-cycle boundaries. This does
   not reproduce every hardware bus phase or interrupt race.
 

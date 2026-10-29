@@ -67,6 +67,25 @@ static void blank_and_restart_tests(void)
     free(text); CHECK(fclose(out) == 0);
 }
 
+static void window_pixel_test(void)
+{
+    Memory m;
+    GraphicsTrace t;
+    GraphicsTraceOptions o;
+    FILE *out = tmpfile(); CHECK(out);
+    memory_init(&m); graphics_trace_options_init(&o); o.enabled = true;
+    CHECK(graphics_trace_start(&t, &m, &o, out));
+    memory_write(&m, 0xFF4B, 7); memory_write(&m, 0xFF47, 0xE4);
+    memory_write(&m, 0x9CA2, 1); memory_write(&m, 0x8011, 8);
+    memory_write(&m, 0xFF40, 0xF1);
+    memory_tick(&m, 18492);
+    CHECK(m.ppu.window_line == 41 && m.ppu.framebuffer[40][20] == 2);
+    char *text = contents(out);
+    char *pixel = strstr(text, "PIXEL xy=20,40 map=9CA2 tile=01 row_address=8010 bytes=00,08 color=2 BGP=E4 palette=2 framebuffer=2 layer=window");
+    CHECK(pixel && !strstr(pixel + 1, "PIXEL xy=20,40"));
+    free(text); CHECK(fclose(out) == 0);
+}
+
 static void diagnostic_equivalence(const char *rom)
 {
     Memory a, b;
@@ -129,7 +148,7 @@ static void bounds_and_options(void)
     o.enabled = true;
     CHECK(graphics_trace_start(&t, &m, &o, out));
     for (unsigned n = 0; n < 1000; ++n)
-        graphics_trace_pixel(&t, 0x9800, 0, 0x8000, 0, 0, 0, 0, 0);
+        graphics_trace_pixel(&t, 0x9800, 0, 0x8000, 0, 0, 0, 0, 0, false);
     text = contents(out);
     unsigned lines = 0;
     for (char *p = text; *p; ++p) if (*p == '\n') ++lines;
@@ -144,7 +163,7 @@ static void bounds_and_options(void)
 int main(int argc, char **argv)
 {
     CHECK(argc == 2);
-    pixel_and_clock_tests(); blank_and_restart_tests(); diagnostic_equivalence(argv[1]); bounds_and_options();
+    pixel_and_clock_tests(); blank_and_restart_tests(); window_pixel_test(); diagnostic_equivalence(argv[1]); bounds_and_options();
     puts("PASS: graphics trace pixel provenance, exact cycles, bounded output and execution equivalence");
     return 0;
 }

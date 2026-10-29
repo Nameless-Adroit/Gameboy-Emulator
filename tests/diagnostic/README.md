@@ -39,3 +39,20 @@ python3 -c "from PIL import Image; Image.open('build/background.pgm').resize((64
 ```
 
 ![Actual CPU-rendered frame, enlarged 4×](background.png)
+
+## Scrolling background + Window ROM
+
+`window.gb` and `generate_window.py` add a second diagnostic without changing
+the original one. It uses a VBlank ISR to scroll SCX while a bordered Window
+panel at screen (24,80) stays fixed. See [WINDOW.md](../../WINDOW.md) for details.
+
+```sh
+python3 tests/diagnostic/generate_window.py
+./build/gb_sdl tests/diagnostic/window.gb
+./build/window_diagnostic_tests tests/diagnostic/window.gb build/window.pgm
+```
+
+`window.png` is the actual third framebuffer exported by the CPU-driven test,
+enlarged 4× with nearest-neighbor sampling.
+
+![Fixed Window over scrolling BG](window.png)

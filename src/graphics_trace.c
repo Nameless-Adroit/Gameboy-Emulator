@@ -147,11 +147,12 @@ void graphics_trace_vblank(GraphicsTrace *t)
 
 void graphics_trace_pixel(GraphicsTrace *t, unsigned map_address, unsigned tile,
                           unsigned data_address, unsigned low, unsigned high,
-                          unsigned color, unsigned bgp, unsigned shade)
+                          unsigned color, unsigned bgp, unsigned shade, bool window)
 {
     event(t, t->frame, t->event_cycle,
-        "PIXEL xy=%u,%u map=%04X tile=%02X row_address=%04X bytes=%02X,%02X color=%u BGP=%02X palette=%u framebuffer=%u",
-        t->x, t->y, map_address, tile, data_address, low, high, color, bgp, shade, shade);
+        "PIXEL xy=%u,%u map=%04X tile=%02X row_address=%04X bytes=%02X,%02X color=%u BGP=%02X palette=%u framebuffer=%u layer=%s",
+        t->x, t->y, map_address, tile, data_address, low, high, color, bgp, shade, shade,
+        window ? "window" : "background");
 }
 
 void graphics_trace_blank(GraphicsTrace *t, const char *reason)

@@ -31,6 +31,11 @@ typedef struct {
     uint8_t wx;
     uint8_t wy;
 
+    // Window has no SCY: hidden scanlines pause this tile-map row counter.
+    // The WY comparison latches at the start of a visible line until VBlank.
+    uint8_t window_line;
+    bool window_y_triggered;
+
     // Combined STAT source line and interrupt requests awaiting delivery.
     bool stat_irq_line;
     uint8_t pending_interrupts;
@@ -42,7 +47,7 @@ typedef struct {
     uint8_t framebuffer[LCD_HEIGHT][LCD_WIDTH];
 
     // Latched at VBlank; the consumer clears it after handling the frame.
-    // All visible background rows have been drawn before this is set.
+    // All visible background/Window rows have been drawn before this is set.
     bool frame_ready;
 } PPU;
 
