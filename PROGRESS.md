@@ -7,8 +7,12 @@ Dates use Africa/Dar_es_Salaam time.
 
 ## Current status
 
-- User-reported manual compatibility milestone: `Tetris.gb` successfully opened
-  on 2026-10-29; gameplay and ROM revision remain unverified.
+- Four-channel DMG audio uses the shared divider/clock, bounded stereo PCM and
+  separate SDL playback. See [AUDIO.md](AUDIO.md) for hardware approximations.
+
+- User-reported manual compatibility milestone: `Tetris.gb` played with sound
+  on 2026-10-29. ROM revision, exact audio fidelity and long-session stability
+  remain unverified.
 
 - FF00 joypad matrix/interrupts are connected to SDL keyboard events, with
   focus-safe releases, HALT handling and basic selected-edge STOP wake.
@@ -34,7 +38,7 @@ Dates use Africa/Dar_es_Salaam time.
   of BG scrolling; fixed timing and documented hardware quirks remain simplified.
 - Cartridge support remains limited to fixed 32 KiB mapping without external RAM.
 - The cartridge loader defect has been fixed by rejecting unsupported RAM-bearing
-  mapper types. The twelve headless suites pass; SDL + trace suites also pass (18/18 in Debug
+  mapper types. The fourteen headless suites pass; SDL + trace suites also pass (21/21 in Debug
   and ASan/UBSan);
   LeakSanitizer is unavailable in this traced execution environment.
 
@@ -696,3 +700,88 @@ released buttons unless its embedding uses the new input API.
 - Scope: gameplay, keyboard response, audio and long-session stability were not
   reported as tested. The tested ROM's revision, size and checksum are unknown;
   successful opening does not establish compatibility with all Tetris releases.
+
+## 2026-10-29 — Modular DMG audio and SDL playback
+
+### Implementation
+
+- Added SDL-independent APU state and modules for register/power handling,
+  channel sequencing, and PCM mixing. Supports two pulse channels (CH1 sweep),
+  wave RAM/channel and noise LFSR; DAC enable, length, envelopes, NR50 volume,
+  NR51 panning and NR52 activity/power are mapped at FF10–FF3F.
+- Routed audio through the existing memory bus and CPU DMA grants. Raw accesses
+  remain untimed. The shared memory_tick observes the existing timer divider;
+  internal bit 12 falling edges clock length/sweep/envelope. FF04 reset observes
+  the same edge without adding cycles. CPU/PPU timing code was not refactored.
+- Generates deterministic 48 kHz signed-16 stereo PCM with rational sample
+  cadence, box averaging and approximate high-pass filtering. Bounded core
+  buffering drops oldest frames with a counter instead of blocking headless use.
+- Added separate SDL queued playback module. Main-thread copies keep SDL's audio
+  thread away from core state. Playback runs independently of LCD/VBlank, uses
+  existing CPU-cycle pacing, clears excessive latency/STOP queues, and cleans up
+  before SDL video shutdown. --mute and device-failure silent fallback drain PCM
+  without disabling the emulated APU.
+- Added dependency-free audio.gb generator: shade-bar display plus repeating
+  left pulse, right pulse, stereo triangle wave and stereo noise stages.
+- Added AUDIO.md with API/function responsibilities, architecture diagram,
+  controls/run instructions, verification and remaining approximations. Updated
+  README, PPU/SDL docs and diagnostic instructions.
+
+### Verification performed in this task
+
+- Added APU_Tests: register masks/power, all channel DAC/length behavior,
+  pulse/wave/noise timing, retrigger phase/sample behavior, LFSR widths/high
+  shifts, length extra clocks, up/down envelopes, sweep overflow/negate,
+  DIV resets, stereo routing/volume, batching equivalence, exact sample cadence,
+  overflow bounds, CPU LDH cycles, HALT/STOP and DMA grants.
+- The first length test exposed an incorrect internal divider-bit selection in
+  the new implementation. Corrected bit 13 to bit 12 (DIV register bit 4),
+  restoring 512 Hz sequencing. A DMA test fixture initially checked restrictions
+  before the existing eight-cycle startup delay elapsed; corrected the fixture
+  to wait until DMA actually becomes active, preserving the DMA implementation.
+- Added Audio_Diagnostic_ROM: real SM83 instructions drive each channel through
+  the bus and produce nonzero PCM; the diagnostic framebuffer is also checked.
+- Added SDL_Audio_Tests using the dummy audio driver: copied queue data/draining,
+  queue bounds, clearing, repeated shutdown, muted drain and deliberate device
+  initialization failure with silent fallback. Physical speaker playback was
+  not tested in this environment.
+- Complete SDL + graphics-trace Debug CTest: **21/21 passed**.
+- Complete SDL + graphics-trace ASan/UBSan CTest: **21/21 passed**; no sanitizer
+  diagnostics. Used ASAN_OPTIONS=detect_leaks=0 for the existing ptrace /
+  LeakSanitizer environment limitation. Pre-existing CPU conversion warnings
+  remain; no new audio compiler warnings were emitted.
+- Complete SDL-disabled, trace-disabled Debug CTest: **14/14 passed**.
+- All 11 individual cpu_instrs, instr_timing and three individual mem_timing
+  ROMs: **15/15 passed**. Logs: /tmp/gb-background-regressions/audio/.
+- SDL audio-diagnostic smoke with dummy/software drivers: presented 220 frames
+  with audio enabled; a separate muted run presented three frames. Both exited
+  successfully. Regeneration reproduced audio.gb byte-for-byte; git diff --check
+  passed.
+- Upstream dmg_sound singles are **not runnable with current cartridge support**:
+  attempted 01-registers.gb and confirmed loader rejection of type 03 with 8 KiB
+  cartridge RAM. Inspected all twelve singles' headers; each uses that same
+  unsupported configuration. No hardware sound-suite pass is claimed and the
+  cartridge tests/loader were not weakened.
+
+### Remaining limitations
+
+Wave RAM access is unrestricted rather than modeling DMG active-wave windows,
+redirected accesses or retrigger corruption. Pulse first-sample and exact wave
+fetch/trigger phases, simultaneous register races, model-specific envelope and
+power quirks remain simplified. Mixing/filtering is approximate and not
+band-limited; VIN, CGB/GBA audio, adaptive audio clock synchronization, host
+volume controls and recording are absent. Host stalls may cause gaps; samples
+are bounded rather than allowing growing latency. Tetris audio and real speaker
+quality require manual verification. Earlier Tetris launch evidence is unchanged.
+
+## 2026-10-29 — Tetris played with sound
+
+- The user confirmed playing Tetris with sound in the emulator. This extends
+  the earlier launch-only result to manual gameplay and audible-output evidence
+  for the user's tested ROM.
+- Updated the current status, README compatibility section and AUDIO.md.
+  Earlier entries retain the verification scope known at the time.
+- Documentation-only change: no emulator code changed, no ROM was rerun by the
+  agent and no automated tests were rerun. git diff --check passed.
+- ROM revision/checksum, exact sound fidelity, full-game completion and
+  long-session stability were not reported as verified.

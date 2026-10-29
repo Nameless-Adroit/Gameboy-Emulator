@@ -13,6 +13,7 @@ void memory_init(Memory *memory)
     memset(memory, 0, sizeof(*memory));
     cartridge_init(&memory->cartridge);
     joypad_init(&memory->joypad);
+    apu_init(&memory->apu);
     ppu_init(&memory->ppu);
     ppu_attach_vram(&memory->ppu, memory->vram);
     ppu_attach_oam(&memory->ppu, memory->oam, &memory->dma.active);
@@ -67,6 +68,7 @@ static uint8_t read_bus(Memory *memory, uint16_t address, bool trace_rom)
     }
 
     if (address == 0xFF00) return joypad_read(&memory->joypad);
+    if (address >= 0xFF10 && address <= 0xFF3F) return apu_read(&memory->apu, address);
 
     // FF04-FF07: Timer registers have hardware-specific behavior.
     if (address >= 0xFF04 && address <= 0xFF07) {
@@ -190,8 +192,14 @@ void memory_write(Memory *memory,
         return;
     }
 
+    if (address >= 0xFF10 && address <= 0xFF3F) {
+        apu_write(&memory->apu, address, value);
+        return;
+    }
+
     // FF04-FF07: Route writes through the timer's register logic.
     if (address >= 0xFF04 && address <= 0xFF07) {
+        if (address == 0xFF04) apu_div_reset(&memory->apu, memory->timer.divider);
         timer_write(&memory->timer, address, value);
         return;
     }
@@ -235,6 +243,8 @@ void memory_write(Memory *memory,
 
 static void tick_devices(Memory *memory, unsigned t_cycles)
 {
+    // APU observes the same divider interval as TIMA, including wraparound.
+    apu_tick(&memory->apu, t_cycles, memory->timer.divider);
     timer_tick(&memory->timer, &memory->io[0x0F], t_cycles);
     ppu_tick(&memory->ppu, t_cycles, &memory->io[0x0F]);
     if (memory->dma.active || memory->dma.start_delay)

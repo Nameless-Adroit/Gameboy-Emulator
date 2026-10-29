@@ -56,3 +56,18 @@ python3 tests/diagnostic/generate_window.py
 enlarged 4× with nearest-neighbor sampling.
 
 ![Fixed Window over scrolling BG](window.png)
+
+## Audio diagnostic
+
+```sh
+python3 tests/diagnostic/generate_audio.py
+./build/gb_sdl tests/diagnostic/audio.gb
+```
+
+`audio.gb` is a generated 32 KiB ROM-only image with the background diagnostic
+and four repeating sound stages: left pulse, right pulse, stereo triangle wave,
+then a stereo noise burst. Each stage lasts about 0.75 seconds. It imports the
+background generator and needs no assembler or external packages. CTest's
+`Audio_Diagnostic_ROM` verifies CPU-driven channel activity and generated PCM;
+SDL dummy-driver tests verify the host queue. Real speaker listening remains a
+manual check. See [AUDIO.md](../../AUDIO.md).

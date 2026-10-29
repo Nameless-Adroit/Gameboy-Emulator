@@ -104,6 +104,9 @@ add_library(gbcore STATIC
     src/cartridge.c
     src/timer.c
     src/dma.c
+    src/audio/apu.c
+    src/audio/apu_channels.c
+    src/audio/apu_mixer.c
     src/joypad.c
     src/ppu.c
 )
@@ -132,7 +135,7 @@ target_link_libraries(gb PRIVATE gbcore)
 # provides explicit per-texture nearest-neighbor scaling control.
 if(GB_ENABLE_SDL)
     find_package(SDL2 2.0.12 CONFIG REQUIRED)
-    add_library(gb_sdl_frontend STATIC src/frontend/sdl_frontend.c)
+    add_library(gb_sdl_frontend STATIC src/frontend/sdl_frontend.c src/frontend/sdl_audio.c)
     target_include_directories(gb_sdl_frontend PUBLIC ${PROJECT_SOURCE_DIR}/src/frontend)
     target_link_libraries(gb_sdl_frontend PUBLIC gbcore SDL2::SDL2)
     add_executable(gb_sdl src/frontend/main.c)
@@ -155,18 +158,24 @@ if(BUILD_TESTING)
                 "${PROJECT_SOURCE_DIR}/tests/diagnostic/background.gb"
                 --frames 2 --graphics-trace)
             set_tests_properties(SDL_Graphics_Trace PROPERTIES
-                ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
+                ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy"
                 PASS_REGULAR_EXPRESSION "SDL_PRESENT.*SDL_ARGB=FFFFFFFF"
                 TIMEOUT 15)
         endif()
     endif()
 
     if(GB_ENABLE_SDL)
+        add_executable(sdl_audio_tests tests/test_sdl_audio.c)
+        target_link_libraries(sdl_audio_tests PRIVATE gb_sdl_frontend)
+        add_test(NAME SDL_Audio_Tests COMMAND sdl_audio_tests)
+        set_tests_properties(SDL_Audio_Tests PROPERTIES
+            ENVIRONMENT "SDL_AUDIODRIVER=dummy" TIMEOUT 15)
+
         add_executable(sdl_joypad_tests tests/test_sdl_joypad.c)
         target_link_libraries(sdl_joypad_tests PRIVATE gb_sdl_frontend)
         add_test(NAME SDL_Joypad_Tests COMMAND sdl_joypad_tests)
         set_tests_properties(SDL_Joypad_Tests PROPERTIES
-            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy"
             TIMEOUT 15)
 
         add_executable(sdl_frontend_tests tests/test_sdl_frontend.c)
@@ -179,7 +188,7 @@ if(BUILD_TESTING)
         set_tests_properties(SDL_Window_Smoke PROPERTIES
             PASS_REGULAR_EXPRESSION "Presented 3 frame")
         set_tests_properties(SDL_Frontend_Tests SDL_Diagnostic_Smoke SDL_Window_Smoke PROPERTIES
-            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software;SDL_AUDIODRIVER=dummy"
             TIMEOUT 15)
         set_tests_properties(SDL_Diagnostic_Smoke PROPERTIES
             PASS_REGULAR_EXPRESSION "Presented 2 frame")
@@ -210,6 +219,15 @@ if(BUILD_TESTING)
     add_executable(ppu_tests tests/test_ppu.c)
     target_link_libraries(ppu_tests PRIVATE gbcore)
     add_test(NAME PPU_Tests COMMAND ppu_tests)
+
+    add_executable(audio_diagnostic_tests tests/test_audio_diagnostic.c)
+    target_link_libraries(audio_diagnostic_tests PRIVATE gbcore)
+    add_test(NAME Audio_Diagnostic_ROM COMMAND audio_diagnostic_tests
+        "${PROJECT_SOURCE_DIR}/tests/diagnostic/audio.gb")
+
+    add_executable(apu_tests tests/test_apu.c)
+    target_link_libraries(apu_tests PRIVATE gbcore)
+    add_test(NAME APU_Tests COMMAND apu_tests)
 
     add_executable(joypad_tests tests/test_joypad.c)
     target_link_libraries(joypad_tests PRIVATE gbcore)

@@ -3,7 +3,8 @@
 The PPU is a C99 register, timing, interrupt and basic background/Window/sprite-rendering
 component. It owns LCD state and the 160 × 144 framebuffer; the memory bus owns
 address decoding, VRAM, OAM and IF. The CPU initiates elapsed hardware time.
-DMG sprites are implemented; APU and a cycle-accurate pixel FIFO remain out of scope. SDL presentation
+DMG sprites are implemented. The [APU](AUDIO.md) is a separate clocked device;
+a cycle-accurate pixel FIFO remains out of scope. SDL presentation
 is a separate optional frontend. See [WINDOW.md](WINDOW.md) for Window behavior.
 
 ## How the CPU communicates with the PPU
@@ -25,8 +26,8 @@ flowchart TD
 
 Every timed CPU fetch/read/write consumes four T-cycles through `cpu_tick()`.
 Explicit internal cycles and HALT idle time use that same path. `memory_tick()`
-advances timer, PPU and DMA by that elapsed duration. On DMG, one T-cycle is one
-PPU dot. All three clocked devices receive the same elapsed time; none advances another device. `cpu_step()` returns time already simulated; the main loop must not tick
+advances timer, APU, PPU and DMA by that elapsed duration. On DMG, one T-cycle is one
+PPU dot. All four clocked devices receive the same elapsed time; none advances another device. `cpu_step()` returns time already simulated; the main loop must not tick
 that return value again.
 
 `memory_read()` and `memory_write()` remain untimed so tests, debuggers and future
@@ -72,7 +73,7 @@ VRAM binding renders white. After copying/moving a `Memory` instance, rebind wit
 | `ppu_write()` | Writes permitted register fields, ignores LY writes, handles LCD enable transitions, then updates STAT | Enforces register access rules and captures interrupt edges caused by writes |
 | `memory_init()` | Initializes the embedded PPU alongside cartridge/bus state and attaches VRAM | Gives every emulator/test instance its own initialized hardware |
 | `memory_read()` / `memory_write()` | Decode LCD addresses and forward to PPU register handlers; writes also flush queued IRQs | Keeps CPU code independent of individual hardware register implementations |
-| `memory_tick()` | Advances timer, PPU and DMA using one elapsed T-cycle count | Preserves the existing central hardware clock path |
+| `memory_tick()` | Advances timer, APU, PPU and DMA using one elapsed T-cycle count | Preserves the existing central hardware clock path |
 | `cpu_tick()` (private to CPU) | Advances hardware and CPU cycle counters together | Provides one timing source for CPU accesses and internal cycles |
 | `cpu_read()` / `cpu_write()` (private to CPU) | Consume an access cycle, then perform the raw bus read/write | Places LCD register access at the same point in simulated time as other CPU bus accesses |
 | `cpu_step()` | Executes a step or HALT idle cycle; checks enabled pending requests and dispatches if IME permits | Connects PPU requests to existing interrupt and HALT behavior without PPU-to-CPU callbacks |

@@ -40,7 +40,7 @@ The frontend is subject to the same ROM/mapper limits as that executable.
 
 | Component/function | Responsibility |
 | --- | --- |
-| `gbcore` | CPU execution, hardware clock, memory bus, timer, PPU and framebuffer generation; never links SDL |
+| `gbcore` | CPU execution, hardware clock, memory bus, timer, APU, PPU and framebuffer generation; never links SDL |
 | `gb_sdl_frontend` | Separate SDL library target that owns a window, renderer, texture and converted host pixels |
 | `src/frontend/main.c` | Loads ROM, initializes CPU/bus, polls events, steps CPU, presents completed frames and acknowledges the frame latch |
 | `sdl_frontend_init()` | Initializes SDL video/timer, opens a resizable window, creates an accelerated renderer with software fallback, configures scaling and creates a streaming texture |
@@ -149,3 +149,13 @@ correlate a selected PPU pixel with its uploaded SDL ARGB value.
 `--trace-pixel X,Y` selects another pixel and `--trace-frames N` bounds logging.
 This is separate from `--frames N`, which stops the application. See
 [GRAPHICS_TRACE.md](GRAPHICS_TRACE.md) for the complete ROM-to-window path.
+
+## Audio playback
+
+`src/frontend/sdl_audio.c` independently owns an SDL queued audio device. The
+runner drains core-generated 48 kHz stereo PCM after bounded CPU batches, even
+without VBlank or with the LCD off. No SDL callback accesses emulator state;
+playback does not tick or pace the core. `--mute` skips the device, and device
+initialization failures fall back to silent execution. Shutdown closes audio
+before the video frontend releases SDL. See [AUDIO.md](AUDIO.md) for channel
+behavior, buffering, tests and remaining approximations.

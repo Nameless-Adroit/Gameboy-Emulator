@@ -86,9 +86,10 @@ STOP/HALT vectors are excluded and replaced by explicit local state tests.
 
 ## Manual ROM compatibility
 
-On **2026-10-29**, the user successfully opened **`Tetris.gb`** in the emulator.
-This records a manual launch milestone. Gameplay, keyboard response, sound and
-long-session stability have not yet been reported as verified for this ROM.
+On **2026-10-29**, the user confirmed playing **`Tetris.gb` with sound** in the
+emulator, extending the earlier successful launch milestone. This is a
+user-reported manual gameplay and audio result; long-session stability and
+hardware-accurate audio reproduction have not been established.
 The ROM revision and checksum were not recorded, so this result applies to the
 user's tested copy. See [PROGRESS.md](PROGRESS.md) for the milestone entry.
 
@@ -113,7 +114,7 @@ bus-owned VRAM, 2bpp tiles, both tile maps/addressing modes, BGP and SCX/SCY.
 timing, LCD startup quirks, the line-153 LY quirk and DMG STAT-write glitch are
 not implemented.
 
-Cycle-progressive OAM DMA is implemented; full MBC, APU and an accurate
+Cycle-progressive OAM DMA is implemented; full MBC and an accurate
 serial device remain unfinished. See [DMA.md](DMA.md) for timing and bus policy. The runner
 prints the common serial-test convention and stops on STOP/lock-up or the step
 limit. Run `./build/ppu_tests` for PPU register, timing, interrupt and clock tests.
@@ -171,3 +172,17 @@ The SDL frontend connects FF00 joypad input to arrow keys (D-pad), Z (A), X (B),
 Enter (Start) and Backspace (Select). Escape closes the window. Focus loss clears
 held buttons. [JOYPAD.md](JOYPAD.md) documents row selection, interrupts, STOP
 wake, tests and input limitations.
+
+## Audio
+
+All four DMG sound channels are connected to the shared hardware clock and SDL2
+stereo playback. Audio runs independently of LCD rendering. Use `--mute` for
+silent playback; headless builds remain SDL-independent.
+
+```sh
+./build/gb_sdl tests/diagnostic/audio.gb
+```
+
+The diagnostic repeats left pulse, right pulse, stereo wave and noise stages.
+[AUDIO.md](AUDIO.md) documents the separate register/channel/mixer/playback
+modules, tests and remaining hardware approximations.

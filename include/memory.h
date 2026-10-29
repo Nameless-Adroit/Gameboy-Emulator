@@ -3,6 +3,7 @@
 
 #include "cartridge.h"
 #include "timer.h"
+#include "apu.h"
 #include "joypad.h"
 #include "dma.h"
 #include "ppu.h"
@@ -31,6 +32,7 @@ typedef struct Memory
 
     Joypad joypad;
     Timer timer;
+    APU apu;
     DMA dma;
     PPU ppu;
 #ifdef GB_GRAPHICS_TRACE

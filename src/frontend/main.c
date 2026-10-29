@@ -6,6 +6,7 @@
 #include "cpu.h"
 #include "graphics_trace.h"
 #include "sdl_frontend.h"
+#include "sdl_audio.h"
 
 /* Host-only pacing: cpu_step remains the sole driver of emulated hardware time.
  * Delays reduce CPU usage when ahead. When behind, run normally without skipping
@@ -22,16 +23,18 @@ static void pace(uint64_t cycles, Uint64 started, Uint64 frequency)
 int main(int argc, char **argv)
 {
     unsigned long frame_limit = 0;
+    bool muted = false;
     GraphicsTraceOptions trace_options;
     graphics_trace_options_init(&trace_options);
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <rom.gb> [--frames N] [--graphics-trace] [--trace-pixel X,Y] [--trace-frames N]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <rom.gb> [--frames N] [--mute] [--graphics-trace] [--trace-pixel X,Y] [--trace-frames N]\n", argv[0]);
         return EXIT_FAILURE;
     }
     for (int i = 2; i < argc; ++i) {
         int handled = graphics_trace_option(&trace_options, argc, argv, &i);
         if (handled < 0) return EXIT_FAILURE;
         if (handled) continue;
+        if (strcmp(argv[i], "--mute") == 0) { muted = true; continue; }
         if (strcmp(argv[i], "--frames") != 0 || i + 1 >= argc) {
             fprintf(stderr, "Unknown or incomplete option: %s\n", argv[i]);
             return EXIT_FAILURE;
@@ -49,6 +52,7 @@ int main(int argc, char **argv)
     CPU cpu;
     Memory memory;
     SDLFrontend frontend;
+    SDLAudio audio = {0};
     memory_init(&memory);
     // Load before opening a window so bad paths/cartridges fail cleanly without
     // initializing the video subsystem or leaving partially created resources.
@@ -57,6 +61,7 @@ int main(int argc, char **argv)
     if (!graphics_trace_start(&trace, &memory, &trace_options, stderr)) return EXIT_FAILURE;
     if (!sdl_frontend_init(&frontend)) return EXIT_FAILURE;
     sdl_frontend_bind_joypad(&frontend, &memory.joypad, &memory.io[0x0F]);
+    if (!muted) (void)sdl_audio_init(&audio);
 
     bool running = true;
     int result = EXIT_SUCCESS;
@@ -93,7 +98,7 @@ int main(int argc, char **argv)
                 }
                 break; // Normal sessions keep polling keyboard input and host quit events.
             }
-            cpu_step(&cpu, &memory); // Already clocks timer/PPU; never tick again.
+            cpu_step(&cpu, &memory); // Already clocks all peripherals; never tick again.
             if (memory.ppu.frame_ready) {
                 if (!sdl_frontend_present(&frontend, &memory.ppu)) {
                     result = EXIT_FAILURE;
@@ -107,11 +112,13 @@ int main(int argc, char **argv)
                 if (frame_limit && frames >= frame_limit) running = false;
             }
         }
-        if (cpu.state == CPU_STOPPED) SDL_Delay(1);
+        if (!sdl_audio_pump(&audio, &memory.apu)) { result = EXIT_FAILURE; break; }
+        if (cpu.state == CPU_STOPPED) { sdl_audio_clear(&audio); SDL_Delay(1); }
         else pace(cpu.total_cycles - cycle_origin, started, frequency);
     }
     if (frame_limit && result == EXIT_SUCCESS)
         printf("Presented %lu frame(s)\n", frames);
+    sdl_audio_destroy(&audio);
     sdl_frontend_destroy(&frontend);
     return result;
 }
