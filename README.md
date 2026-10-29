@@ -84,6 +84,14 @@ individual bus accesses. It deliberately follows upstream guidance to exclude
 IME/IE from the vectors; the local C tests check interrupt sequences instead.
 STOP/HALT vectors are excluded and replaced by explicit local state tests.
 
+## Manual ROM compatibility
+
+On **2026-10-29**, the user successfully opened **`Tetris.gb`** in the emulator.
+This records a manual launch milestone. Gameplay, keyboard response, sound and
+long-session stability have not yet been reported as verified for this ROM.
+The ROM revision and checksum were not recorded, so this result applies to the
+user's tested copy. See [PROGRESS.md](PROGRESS.md) for the milestone entry.
+
 ## Hardware still needed
 
 The bus maps cartridge ROM, VRAM, WRAM and its echo, OAM, HRAM and I/O.

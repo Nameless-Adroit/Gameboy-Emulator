@@ -7,6 +7,9 @@ Dates use Africa/Dar_es_Salaam time.
 
 ## Current status
 
+- User-reported manual compatibility milestone: `Tetris.gb` successfully opened
+  on 2026-10-29; gameplay and ROM revision remain unverified.
+
 - FF00 joypad matrix/interrupts are connected to SDL keyboard events, with
   focus-safe releases, HALT handling and basic selected-edge STOP wake.
 
@@ -680,3 +683,16 @@ multiplayer, joysticks and configurable mappings are absent. Opposing directions
 can be held together as physical matrix bits. SDL event tests used dummy/software
 video, not a physical desktop keyboard session. Headless execution defaults to
 released buttons unless its embedding uses the new input API.
+
+## 2026-10-29 — Tetris ROM opens successfully
+
+- The user reported successfully opening `Tetris.gb` in the emulator. This is
+  a manual ROM launch milestone following the joypad/SDL input integration.
+- Added the result to README's manual ROM compatibility section and the current
+  status above. No emulator code or cartridge support was changed.
+- Evidence: user observation; this documentation task did not rerun the ROM or
+  regression suite. Earlier automated test results remain recorded in their
+  original entries.
+- Scope: gameplay, keyboard response, audio and long-session stability were not
+  reported as tested. The tested ROM's revision, size and checksum are unknown;
+  successful opening does not establish compatibility with all Tetris releases.
