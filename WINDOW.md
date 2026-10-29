@@ -1,7 +1,7 @@
 # DMG Window scanline layer
 
 The Window is an opaque tile layer over the scrolling background. It reuses
-`render_background_line()` (the existing combined scanline renderer), the same
+`render_scanline()` (the existing combined scanline renderer), the same
 2bpp row decoder, LCDC tile-data addressing, BGP mapping and 160 × 144 framebuffer.
 It adds no memory ownership, CPU instruction, SDL dependency or extra clock tick.
 
@@ -83,10 +83,11 @@ This is deliberately **not cycle-accurate Window hardware**:
 - WX=166 is treated as one visible pixel; the monochrome hardware's special
   full-width/vertical-offset behavior is absent.
 - Disabled-Window glitch pixels and other fetcher/FIFO artifacts are absent.
-- Existing LCD startup, line-153 LY, STAT-write and VRAM/OAM access-limit gaps
-  remain. This targets DMG behavior, not GBC's different Window-latch rules.
+- Existing LCD startup, line-153 LY, STAT-write and fine bus-phase gaps remain.
+  CPU VRAM/OAM mode grants and progressive DMA are now enforced by the bus. This targets DMG behavior, not GBC's different Window-latch rules.
 
-Sprites, APU and a pixel FIFO remain outside this iteration.
+DMG sprites now compose above this layer using its original color IDs for
+priority; see [SPRITES.md](SPRITES.md). APU and a pixel FIFO remain unfinished.
 
 ## Diagnostic ROM and inspection
 

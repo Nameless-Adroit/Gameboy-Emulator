@@ -1,9 +1,9 @@
 # DMG PPU timing and bus integration
 
-The PPU is a C99 register, timing, interrupt and basic background/Window-rendering
+The PPU is a C99 register, timing, interrupt and basic background/Window/sprite-rendering
 component. It owns LCD state and the 160 × 144 framebuffer; the memory bus owns
 address decoding, VRAM, OAM and IF. The CPU initiates elapsed hardware time.
-Sprites, APU and a cycle-accurate pixel FIFO remain out of scope. SDL presentation
+DMG sprites are implemented; APU and a cycle-accurate pixel FIFO remain out of scope. SDL presentation
 is a separate optional frontend. See [WINDOW.md](WINDOW.md) for Window behavior.
 
 ## How the CPU communicates with the PPU
@@ -13,6 +13,7 @@ flowchart TD
     CPU[CPU instruction or HALT idle] --> CT[cpu_tick]
     CT --> MT[memory_tick]
     MT --> TIMER[timer_tick]
+    MT --> DMA[dma_tick when pending or active]
     MT --> PPU[ppu_tick]
     PPU --> IF[IF interrupt request bits]
     IF --> STEP[cpu_step checks IF and IE at instruction boundaries]
@@ -24,16 +25,16 @@ flowchart TD
 
 Every timed CPU fetch/read/write consumes four T-cycles through `cpu_tick()`.
 Explicit internal cycles and HALT idle time use that same path. `memory_tick()`
-advances both timer and PPU by that elapsed duration. On DMG, one T-cycle is one
-PPU dot. Both peripherals receive the same elapsed time; neither advances the other. `cpu_step()` returns time already simulated; the main loop must not tick
+advances timer, PPU and DMA by that elapsed duration. On DMG, one T-cycle is one
+PPU dot. All three clocked devices receive the same elapsed time; none advances another device. `cpu_step()` returns time already simulated; the main loop must not tick
 that return value again.
 
 `memory_read()` and `memory_write()` remain untimed so tests, debuggers and future
 hardware components can access the bus without moving the hardware clock.
 CPU helpers advance time before sampling or committing the raw bus access.
 
-LCD addresses `FF40–FF45` and `FF47–FF4B` route to the PPU. `FF46` remains a bus
-I/O byte reserved for a future DMA controller; no DMA behavior is implemented.
+LCD addresses `FF40–FF45` and `FF47–FF4B` route to the PPU. `FF46` starts the
+bus-owned progressive OAM DMA controller; see [DMA.md](DMA.md).
 IF is the bus byte at `FF0F`, while IE is at `FFFF`.
 
 A register write can itself create a STAT edge. Since the original `ppu_write()`
@@ -46,12 +47,15 @@ in the same way, or deliver them with their next tick.
 ## State and functions
 
 `PPU` stores the LCD registers, dot position, LY, combined STAT line state,
-queued interrupt bits, a borrowed const VRAM pointer and a framebuffer. Keeping this state inside each
-instance permits isolated tests without globals or a pointer back to the CPU. `memory_init()` binds its own 8 KiB VRAM storage after
-`ppu_init()`. The PPU neither allocates nor frees VRAM and never reads it through
+queued interrupt bits, borrowed const VRAM/OAM views, ten selected OAM snapshots
+and a framebuffer. Keeping this state inside each instance permits isolated tests
+without globals or a pointer back to the CPU. `memory_init()` binds its own 8 KiB
+VRAM, 160-byte OAM and DMA ownership flag after `ppu_init()`. The PPU neither
+allocates nor frees these buffers and never reads them through
 the timed CPU bus. Storage must outlive the PPU. A standalone instance without a
 VRAM binding renders white. After copying/moving a `Memory` instance, rebind with
-`ppu_attach_vram(&memory.ppu, memory.vram)`; do not retain the old address.
+`ppu_attach_vram(&memory.ppu, memory.vram)` and
+`ppu_attach_oam(&memory.ppu, memory.oam, &memory.dma.active)`; do not retain old addresses.
 
 | Function | What it does | Why it exists |
 | --- | --- | --- |
@@ -59,15 +63,16 @@ VRAM binding renders white. After copying/moving a `Memory` instance, rebind wit
 | `current_mode()` (private) | Derives mode from LCD enable, LY and dot position | Keeps mode selection in one place without a second independently mutable mode variable |
 | `update_stat()` (private) | Recalculates mode/coincidence bits and the OR of enabled STAT sources; queues IF bit 1 only on a rising edge | Keeps register reads and interrupt generation consistent, including STAT blocking |
 | `ppu_tick()` | Advances LCD dots, renders each visible row at mode-3 completion, wraps frames, queues VBlank and ORs IRQs into IF | Handles arbitrary tick batches without skipping mode or interrupt transitions; zero dots only flushes queued IRQs |
+| `ppu_attach_oam()` | Binds bus-owned OAM and optional DMA ownership state | Connects Mode-2 selection and DMA writes without CPU bus accesses; see SPRITES.md |
 | `ppu_attach_vram()` | Binds a read-only view of bus-owned 8 KiB VRAM, or detaches with NULL | Supplies rendering data without bus ownership, allocation or a circular dependency |
 | `ppu_decode_tile_row()` | Decodes two bitplane bytes into eight color IDs, left to right | Isolates the pure, testable DMG 2bpp format from palettes and timing |
 | `ppu_decode_tile()` | Decodes all eight rows of a 16-byte tile | Provides a complete tile decoder using the same row implementation |
-| `render_background_line()` (private) | Composes BG/Window map coordinates, shared 2bpp decoding and BGP shades into the current framebuffer row | Keeps scanline rendering separate from mode/interrupt logic and consumes no simulated time |
+| `render_scanline()` (private) | Composes BG/Window coordinates and selected objects using shared 2bpp decoding, palette mapping and raw-color priority | Keeps scanline rendering separate from mode/interrupt logic and consumes no simulated time |
 | `ppu_read()` | Reads registers, forces STAT bit 7 high, returns FF for unhandled addresses | Exposes a const, untimed register interface without exposing bus layout |
 | `ppu_write()` | Writes permitted register fields, ignores LY writes, handles LCD enable transitions, then updates STAT | Enforces register access rules and captures interrupt edges caused by writes |
 | `memory_init()` | Initializes the embedded PPU alongside cartridge/bus state and attaches VRAM | Gives every emulator/test instance its own initialized hardware |
 | `memory_read()` / `memory_write()` | Decode LCD addresses and forward to PPU register handlers; writes also flush queued IRQs | Keeps CPU code independent of individual hardware register implementations |
-| `memory_tick()` | Advances timer and PPU using one elapsed T-cycle count | Preserves the existing central hardware clock path |
+| `memory_tick()` | Advances timer, PPU and DMA using one elapsed T-cycle count | Preserves the existing central hardware clock path |
 | `cpu_tick()` (private to CPU) | Advances hardware and CPU cycle counters together | Provides one timing source for CPU accesses and internal cycles |
 | `cpu_read()` / `cpu_write()` (private to CPU) | Consume an access cycle, then perform the raw bus read/write | Places LCD register access at the same point in simulated time as other CPU bus accesses |
 | `cpu_step()` | Executes a step or HALT idle cycle; checks enabled pending requests and dispatches if IME permits | Connects PPU requests to existing interrupt and HALT behavior without PPU-to-CPU callbacks |
@@ -114,15 +119,18 @@ bit remains set does not restart the scanline.
 - **STAT quirks:** ordinary combined-line edges are modeled, but the DMG
   STAT-write glitch and finer hardware transition/comparator timing are not.
   [Pan Docs documents the write glitch](https://github.com/gbdev/pandocs/blob/master/src/STAT.md).
-- **Bus access:** VRAM/OAM restrictions during active modes and DMA are absent.
+- **Bus access:** CPU VRAM/OAM mode restrictions and active DMA restrictions are
+  implemented; fine bus phases, open-bus conflicts and sprite-fetch corruption
+  remain simplified. Raw device/test access bypasses CPU grants.
 - **Rendering granularity:** a whole scanline is drawn at dot 252, sampling the
   current VRAM, SCX/SCY, LCDC and BGP state then. Mid-scanline changes therefore
   affect the whole row; pixel-accurate raster effects are not reproduced.
 - **Window:** basic placement and the internal line counter are implemented, but
   Window fetch penalties, pixel-FIFO restart effects and WX=0/166 hardware quirks
   are not. See [WINDOW.md](WINDOW.md) for precise modeled behavior.
-- **Sprites:** absent; object palettes and LCDC object bits have no rendering
-  effect. LCD-off white and disabled-BG/Window white both use shade 0.
+- **Sprites:** DMG selection, sizes/flips, palettes and composition are implemented.
+  OAM attribute snapshots, DMA conflicts and sprite fetch timing remain simplified;
+  see [SPRITES.md](SPRITES.md). LCD-off white uses shade 0.
 - **CPU bus phase:** accesses sample/commit at four-T-cycle boundaries. This does
   not reproduce every hardware bus phase or interrupt race.
 
@@ -201,3 +209,7 @@ or export a fresh framebuffer without a frontend.
 ![CPU-rendered background diagnostic, enlarged 4× with nearest-neighbor sampling](tests/diagnostic/background.png)
 
 Current-run results and ROM regressions are recorded in [PROGRESS.md](PROGRESS.md).
+
+FF00 input is handled by the separate [joypad controller](JOYPAD.md). Host button
+changes and row-selection edges update its levels/interrupt request without
+advancing the PPU or the shared device clock.

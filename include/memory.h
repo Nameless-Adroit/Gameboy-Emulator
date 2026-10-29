@@ -3,6 +3,8 @@
 
 #include "cartridge.h"
 #include "timer.h"
+#include "joypad.h"
+#include "dma.h"
 #include "ppu.h"
 #include <stdint.h>
 
@@ -27,7 +29,9 @@ typedef struct Memory
     // Interrupt Enable register, address FFFF
     uint8_t ie;
 
+    Joypad joypad;
     Timer timer;
+    DMA dma;
     PPU ppu;
 #ifdef GB_GRAPHICS_TRACE
     struct GraphicsTrace *trace; // Borrowed optional observer; never owns time.
@@ -43,6 +47,14 @@ uint8_t memory_read(Memory *memory, uint16_t address);
 void memory_write(Memory *memory,
                   uint16_t address,
                   uint8_t value);
+
+// CPU-facing bus policy, still untimed. Timed CPU helpers clock first, then
+// sample these functions; DMA/PPU/debuggers use the raw interface above.
+uint8_t memory_cpu_read(Memory *memory, uint16_t address);
+void memory_cpu_write(Memory *memory, uint16_t address, uint8_t value);
+
+// DMA master reads the raw map without claiming CPU/graphics-trace provenance.
+uint8_t memory_dma_read(Memory *memory, uint16_t address);
 
 // Advance peripherals by elapsed CPU T-cycles.
 void memory_tick(Memory *memory, unsigned t_cycles);

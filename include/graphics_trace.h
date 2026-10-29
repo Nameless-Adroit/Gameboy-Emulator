@@ -39,6 +39,9 @@ void graphics_trace_vblank(GraphicsTrace *trace);
 void graphics_trace_pixel(GraphicsTrace *trace, unsigned map_address, unsigned tile,
                           unsigned data_address, unsigned low, unsigned high,
                           unsigned color, unsigned bgp, unsigned shade, bool window);
+void graphics_trace_sprite_pixel(GraphicsTrace *trace, unsigned index, unsigned tile,
+    unsigned flags, unsigned address, unsigned low, unsigned high,
+    unsigned color, unsigned obp, unsigned shade);
 void graphics_trace_blank(GraphicsTrace *trace, const char *reason);
 void graphics_trace_present(GraphicsTrace *trace, unsigned shade, uint32_t argb);
 #endif

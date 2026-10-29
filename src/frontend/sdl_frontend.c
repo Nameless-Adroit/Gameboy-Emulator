@@ -24,10 +24,41 @@ static bool redraw(SDLFrontend *frontend)
     return true;
 }
 
+static void release_buttons(SDLFrontend *frontend)
+{
+    if (frontend->joypad)
+        joypad_set_buttons(frontend->joypad, 0, frontend->joypad_interrupts);
+}
+
+void sdl_frontend_bind_joypad(SDLFrontend *frontend, Joypad *joypad, uint8_t *interrupt_flags)
+{
+    release_buttons(frontend);
+    frontend->joypad = joypad && interrupt_flags ? joypad : NULL;
+    frontend->joypad_interrupts = joypad && interrupt_flags ? interrupt_flags : NULL;
+}
+
+static JoypadButton keyboard_button(SDL_Scancode scancode)
+{
+    // Physical scancodes keep controls stable across keyboard layouts. Escape
+    // remains a host command and is never forwarded as a Game Boy button.
+    switch (scancode) {
+    case SDL_SCANCODE_RIGHT: return JOYPAD_RIGHT;
+    case SDL_SCANCODE_LEFT: return JOYPAD_LEFT;
+    case SDL_SCANCODE_UP: return JOYPAD_UP;
+    case SDL_SCANCODE_DOWN: return JOYPAD_DOWN;
+    case SDL_SCANCODE_Z: return JOYPAD_A;
+    case SDL_SCANCODE_X: return JOYPAD_B;
+    case SDL_SCANCODE_BACKSPACE: return JOYPAD_SELECT;
+    case SDL_SCANCODE_RETURN: return JOYPAD_START;
+    default: return (JoypadButton)0;
+    }
+}
+
 void sdl_frontend_destroy(SDLFrontend *frontend)
 {
     // Destroy in reverse ownership order. NULL handles are permitted here so
     // startup errors and normal shutdown share the same cleanup path.
+    release_buttons(frontend); // Do not leave a held button after closing/rebinding.
     if (frontend->texture) SDL_DestroyTexture(frontend->texture);
     if (frontend->renderer) SDL_DestroyRenderer(frontend->renderer);
     if (frontend->window) SDL_DestroyWindow(frontend->window);
@@ -44,6 +75,7 @@ bool sdl_frontend_init(SDLFrontend *frontend)
         return false;
     }
     frontend->initialized = true;
+    frontend->input_focused = true;
 
     // Override filtering preferences for pixel art. SetTextureScaleMode below
     // also explicitly applies nearest-neighbor filtering to this texture.
@@ -97,6 +129,23 @@ bool sdl_frontend_poll(SDLFrontend *frontend, bool *running)
     // Poll on the main/video thread. Do this even without frame_ready so a ROM
     // that disables its LCD or enters STOP cannot leave an unresponsive window.
     while (SDL_PollEvent(&event)) {
+        // Apply each event in order: even a down/up tap drained in one poll
+        // must preserve its interrupt edge, rather than only its final state.
+        if (event.type == SDL_WINDOWEVENT) {
+            if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
+                event.window.event == SDL_WINDOWEVENT_MINIMIZED) {
+                frontend->input_focused = false;
+                release_buttons(frontend);
+            } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+                frontend->input_focused = true;
+            }
+        }
+        if (frontend->joypad && (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)) {
+            JoypadButton button = keyboard_button(event.key.keysym.scancode);
+            bool pressed = event.type == SDL_KEYDOWN;
+            if (button && (!pressed || (frontend->input_focused && !event.key.repeat)))
+                joypad_set_button(frontend->joypad, button, pressed, frontend->joypad_interrupts);
+        }
         if (event.type == SDL_QUIT ||
             (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) ||
             (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE))
@@ -106,6 +155,7 @@ bool sdl_frontend_poll(SDLFrontend *frontend, bool *running)
              event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED))
             needs_redraw = true;
     }
+    if (!*running) release_buttons(frontend);
     return !*running || !needs_redraw || redraw(frontend);
 }
 

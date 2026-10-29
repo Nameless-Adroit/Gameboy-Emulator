@@ -56,16 +56,24 @@ int main(int argc, char **argv)
     reset_cpu(&cpu, &memory);
     if (!graphics_trace_start(&trace, &memory, &trace_options, stderr)) return EXIT_FAILURE;
     if (!sdl_frontend_init(&frontend)) return EXIT_FAILURE;
+    sdl_frontend_bind_joypad(&frontend, &memory.joypad, &memory.io[0x0F]);
 
     bool running = true;
     int result = EXIT_SUCCESS;
     unsigned long frames = 0;
+    uint64_t cycle_origin = cpu.total_cycles;
     Uint64 started = SDL_GetPerformanceCounter();
     Uint64 frequency = SDL_GetPerformanceFrequency();
     while (running) {
         if (!sdl_frontend_poll(&frontend, &running)) {
             result = EXIT_FAILURE;
             break;
+        }
+        if (cpu.state == CPU_STOPPED && memory.joypad.wake_pending) {
+            // Host-only pacing restarts after a paused STOP session. Do not run
+            // a burst of emulation to catch up with wall time spent waiting.
+            started = SDL_GetPerformanceCounter();
+            cycle_origin = cpu.total_cycles;
         }
         // Bound CPU work between event polls independently of VBlank. Checking
         // frame_ready after every step prevents stepping into next-frame drawing
@@ -77,13 +85,13 @@ int main(int argc, char **argv)
                 running = false;
                 break;
             }
-            if (cpu.state == CPU_STOPPED) {
+            if (cpu.state == CPU_STOPPED && !memory.joypad.wake_pending) {
                 if (frame_limit) {
                     fprintf(stderr, "CPU stopped before reaching frame limit\n");
                     result = EXIT_FAILURE;
                     running = false;
                 }
-                break; // Normal sessions keep their last image and process quit.
+                break; // Normal sessions keep polling keyboard input and host quit events.
             }
             cpu_step(&cpu, &memory); // Already clocks timer/PPU; never tick again.
             if (memory.ppu.frame_ready) {
@@ -100,7 +108,7 @@ int main(int argc, char **argv)
             }
         }
         if (cpu.state == CPU_STOPPED) SDL_Delay(1);
-        else pace(cpu.total_cycles, started, frequency);
+        else pace(cpu.total_cycles - cycle_origin, started, frequency);
     }
     if (frame_limit && result == EXIT_SUCCESS)
         printf("Presented %lu frame(s)\n", frames);

@@ -140,7 +140,7 @@ static void cpu_tick(CPU *cpu, Memory *memory, unsigned t_cycles)
 static uint8_t cpu_read(CPU *cpu, Memory *memory, uint16_t address)
 {
     cpu_tick(cpu, memory, 4);
-    return memory_read(memory, address);
+    return memory_cpu_read(memory, address);
 }
 
 #ifdef GB_GRAPHICS_TRACE
@@ -160,7 +160,7 @@ static uint8_t cpu_fetch(CPU *cpu, Memory *memory, uint16_t address)
 static void cpu_write(CPU *cpu, Memory *memory, uint16_t address, uint8_t value)
 {
     cpu_tick(cpu, memory, 4);
-    memory_write(memory, address, value);
+    memory_cpu_write(memory, address, value);
 }
 
 // Fetch a single byte and advance PC
@@ -614,6 +614,13 @@ unsigned cpu_step(CPU *cpu, Memory *memory)
 {
     uint8_t pending;
     cpu->cycles = 0;
+    // External input can change while the system clock is stopped. Consume
+    // selected-line edges at instruction boundaries; old edges observed while
+    // running must not later wake a newly executed STOP instruction.
+    if (memory->joypad.wake_pending) {
+        memory->joypad.wake_pending = false;
+        cpu_wake_stop(cpu);
+    }
     if (cpu->state == CPU_STOPPED) return 0;
 #ifdef GB_GRAPHICS_TRACE
     if (memory->trace) {

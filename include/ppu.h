@@ -7,6 +7,12 @@
 #define LCD_WIDTH  160
 #define LCD_HEIGHT 144
 
+// Snapshot selected from one OAM entry during Mode 2. OAM order is retained;
+// pixel priority (smaller X, then earlier OAM) is resolved separately.
+typedef struct {
+    uint8_t y, x, tile, flags, index, height;
+} PPUSprite;
+
 typedef struct {
     // Position within the current scanline: 0..455 while enabled.
     unsigned dot;
@@ -42,12 +48,16 @@ typedef struct {
 
     // Borrowed 8 KiB bus VRAM; NULL leaves standalone timing tests blank.
     const uint8_t *vram;
+    const uint8_t *oam;          // Borrowed 160-byte OAM view, not CPU bus access.
+    const bool *oam_dma_active;  // Optional DMA ownership signal, borrowed too.
+    PPUSprite sprites[10];
+    unsigned sprite_count;      // First ten Y-matching entries on this scanline.
 
     // BGP-mapped DMG shades: 0 white, 1 light gray, 2 dark gray, 3 black.
     uint8_t framebuffer[LCD_HEIGHT][LCD_WIDTH];
 
     // Latched at VBlank; the consumer clears it after handling the frame.
-    // All visible background/Window rows have been drawn before this is set.
+    // All visible composed rows have been drawn before this is set.
     bool frame_ready;
 } PPU;
 
@@ -57,6 +67,10 @@ void ppu_init(PPU *ppu);
 // Bind bus-owned VRAM after init. Storage must outlive the PPU; no clock tick.
 // Rebind after moving/copying the containing Memory; NULL detaches it.
 void ppu_attach_vram(PPU *ppu, const uint8_t vram[0x2000]);
+
+// Bind bus-owned OAM and optional DMA-active state after init. Rebind both views
+// after moving/copying Memory. NULL OAM safely disables selection.
+void ppu_attach_oam(PPU *ppu, const uint8_t oam[160], const bool *dma_active);
 
 // Pure 2bpp decoding: bit 7 is the left pixel, first byte is the low plane.
 // These return color IDs, not palette-mapped shades. Arrays must not overlap.

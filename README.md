@@ -7,7 +7,7 @@ and hardware approximations.
 
 This revision implements all **244 ordinary base instructions**, the **CB prefix
 and all 256 CB instructions**, and lock-up handling for the 11 illegal base bytes.
-It includes a mapped memory bus, timer and basic DMG background/Window renderer; it is
+It includes a mapped memory bus, timer and basic DMG background/Window/sprite renderer; it is
 not yet a complete Game Boy emulator.
 See [REVIEW.md](REVIEW.md) for the original-code assessment and
 [OPCODE_AUDIT.md](OPCODE_AUDIT.md) for all 512 opcode-table entries.
@@ -65,8 +65,8 @@ repository is stale and is deliberately excluded from the delivery archive.
 * Interrupt requests live in IF (`FF0F`) and enables in IE (`FFFF`). IME is
   internal CPU state. Requests are serviced at instruction boundaries.
 * HALT idles for 4 T-cycles and wakes when an enabled interrupt is pending.
-  STOP idles for 0 T-cycles until `cpu_wake_stop()`; a future input controller
-  must call that hook. Illegal instructions enter `CPU_LOCKED` until reset.
+  STOP idles for 0 T-cycles until a new selected joypad line edge or the explicit
+  `cpu_wake_stop()` hook. Illegal instructions enter `CPU_LOCKED` until reset.
 
 ## Test reproduction
 
@@ -88,7 +88,8 @@ STOP/HALT vectors are excluded and replaced by explicit local state tests.
 
 The bus maps cartridge ROM, VRAM, WRAM and its echo, OAM, HRAM and I/O.
 ROM writes are protected; timer and LCD registers have device-specific handlers.
-CPU access restrictions during PPU modes and DMA are not yet implemented.
+CPU-facing access enforces LCD VRAM/OAM mode restrictions and HRAM-only access
+during active DMG OAM DMA. Raw bus access remains available to devices/tests.
 The ROM loader rejects files larger than 32 KiB instead of silently truncating.
 A 32 KiB file fitting the loader is not a guarantee of cartridge compatibility.
 
@@ -104,7 +105,8 @@ bus-owned VRAM, 2bpp tiles, both tile maps/addressing modes, BGP and SCX/SCY.
 timing, LCD startup quirks, the line-153 LY quirk and DMG STAT-write glitch are
 not implemented.
 
-No DMA, full MBC, joypad, APU or accurate serial device is implemented. The runner
+Cycle-progressive OAM DMA is implemented; full MBC, APU and an accurate
+serial device remain unfinished. See [DMA.md](DMA.md) for timing and bus policy. The runner
 prints the common serial-test convention and stops on STOP/lock-up or the step
 limit. Run `./build/ppu_tests` for PPU register, timing, interrupt and clock tests.
 
@@ -147,3 +149,17 @@ cmake --build build
 
 [WINDOW.md](WINDOW.md) explains placement, counter behavior, tests and the
 remaining fixed-timing and hardware-quirk approximations.
+
+## DMG sprites
+
+Mode 2 selects up to ten objects from bus-owned OAM. The compositor supports
+8×8/8×16 sprites, transparency, both flips, OBP palettes and DMG priority over
+BG/Window pixels. See [SPRITES.md](SPRITES.md) for design, tests and remaining
+DMA/fetch-timing approximations.
+
+## Keyboard input
+
+The SDL frontend connects FF00 joypad input to arrow keys (D-pad), Z (A), X (B),
+Enter (Start) and Backspace (Select). Escape closes the window. Focus loss clears
+held buttons. [JOYPAD.md](JOYPAD.md) documents row selection, interrupts, STOP
+wake, tests and input limitations.

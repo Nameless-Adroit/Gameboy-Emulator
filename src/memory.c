@@ -12,21 +12,26 @@ void memory_init(Memory *memory)
 {
     memset(memory, 0, sizeof(*memory));
     cartridge_init(&memory->cartridge);
+    joypad_init(&memory->joypad);
     ppu_init(&memory->ppu);
     ppu_attach_vram(&memory->ppu, memory->vram);
+    ppu_attach_oam(&memory->ppu, memory->oam, &memory->dma.active);
 }
 
 // ------------------------------------------------------------
 // Read one byte from the CPU address space
 // ------------------------------------------------------------
 
-uint8_t memory_read(Memory *memory, uint16_t address)
+static uint8_t read_bus(Memory *memory, uint16_t address, bool trace_rom)
 {
+#ifndef GB_GRAPHICS_TRACE
+    (void)trace_rom;
+#endif
     // 0000-7FFF: Cartridge ROM
     if (address <= 0x7FFF) {
         uint8_t value = cartridge_read(&memory->cartridge, address);
 #ifdef GB_GRAPHICS_TRACE
-        if (memory->trace) graphics_trace_rom(memory->trace, address, value);
+        if (trace_rom && memory->trace) graphics_trace_rom(memory->trace, address, value);
 #endif
         return value;
     }
@@ -61,12 +66,14 @@ uint8_t memory_read(Memory *memory, uint16_t address)
         return 0xFF;  // Temporary simplification
     }
 
+    if (address == 0xFF00) return joypad_read(&memory->joypad);
+
     // FF04-FF07: Timer registers have hardware-specific behavior.
     if (address >= 0xFF04 && address <= 0xFF07) {
         return timer_read(&memory->timer, address);
     }
 
-    // LCD registers; FF46 is reserved for the future DMA controller.
+    // LCD registers; FF46 is owned by the DMA controller.
     if (address >= 0xFF40 && address <= 0xFF4B && address != 0xFF46) {
         return ppu_read(&memory->ppu, address);
     }
@@ -83,6 +90,44 @@ uint8_t memory_read(Memory *memory, uint16_t address)
 
     // FFFF: Interrupt Enable register
     return memory->ie;
+}
+
+uint8_t memory_read(Memory *memory, uint16_t address)
+{
+    return read_bus(memory, address, true);
+}
+
+uint8_t memory_dma_read(Memory *memory, uint16_t address)
+{
+    return read_bus(memory, address, false);
+}
+
+/* Only instruction bus transactions pass here. Interrupt-controller sampling
+ * of IF/IE and DMA master transfers must not be mistaken for CPU data reads. */
+static bool cpu_access_blocked(const Memory *memory, uint16_t address)
+{
+    if (memory->dma.active && !(address >= 0xFF80 && address <= 0xFFFE))
+        return true;
+    if (memory->ppu.lcdc & 0x80) {
+        unsigned mode = memory->ppu.stat & 3u;
+        if (address >= 0x8000 && address <= 0x9FFF && mode == 3) return true;
+        if (address >= 0xFE00 && address <= 0xFE9F && (mode == 2 || mode == 3))
+            return true;
+    }
+    return false;
+}
+
+uint8_t memory_cpu_read(Memory *memory, uint16_t address)
+{
+    return cpu_access_blocked(memory, address) ? 0xFF : memory_read(memory, address);
+}
+
+void memory_cpu_write(Memory *memory, uint16_t address, uint8_t value)
+{
+    // This exception permits a running HRAM routine to restart DMA. FF46 reads
+    // remain blocked during DMA, just like the other non-HRAM CPU reads.
+    if (address == 0xFF46 || !cpu_access_blocked(memory, address))
+        memory_write(memory, address, value);
 }
 
 // ------------------------------------------------------------
@@ -140,9 +185,20 @@ void memory_write(Memory *memory,
         return;
     }
 
+    if (address == 0xFF00) {
+        joypad_write(&memory->joypad, value, &memory->io[0x0F]);
+        return;
+    }
+
     // FF04-FF07: Route writes through the timer's register logic.
     if (address >= 0xFF04 && address <= 0xFF07) {
         timer_write(&memory->timer, address, value);
+        return;
+    }
+
+    if (address == 0xFF46) {
+        memory->io[0x46] = value; // Raw FF46 reads expose the last written page.
+        dma_start(&memory->dma, value);
         return;
     }
 
@@ -177,13 +233,24 @@ void memory_write(Memory *memory,
     memory->ie = value;
 }
 
-void memory_tick(Memory *memory, unsigned t_cycles)
+static void tick_devices(Memory *memory, unsigned t_cycles)
 {
-    // FF0F is IF; the timer requests its interrupt by setting bit 2.
     timer_tick(&memory->timer, &memory->io[0x0F], t_cycles);
-    // DMG: one PPU dot per CPU T-cycle, including HALT idle time.
     ppu_tick(&memory->ppu, t_cycles, &memory->io[0x0F]);
+    if (memory->dma.active || memory->dma.start_delay)
+        dma_tick(&memory->dma, memory, t_cycles);
 #ifdef GB_GRAPHICS_TRACE
     if (memory->trace) memory->trace->cycles += t_cycles;
 #endif
+}
+
+void memory_tick(Memory *memory, unsigned t_cycles)
+{
+    // Interleave devices only while needed. When DMA ends inside a large
+    // batch, the remainder returns immediately to ordinary batched ticking.
+    while (t_cycles && (memory->dma.active || memory->dma.start_delay)) {
+        tick_devices(memory, 1);
+        --t_cycles;
+    }
+    tick_devices(memory, t_cycles); // Also preserves zero-cycle IRQ flushing.
 }

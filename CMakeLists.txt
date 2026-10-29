@@ -103,6 +103,8 @@ add_library(gbcore STATIC
     src/memory.c
     src/cartridge.c
     src/timer.c
+    src/dma.c
+    src/joypad.c
     src/ppu.c
 )
 
@@ -160,6 +162,13 @@ if(BUILD_TESTING)
     endif()
 
     if(GB_ENABLE_SDL)
+        add_executable(sdl_joypad_tests tests/test_sdl_joypad.c)
+        target_link_libraries(sdl_joypad_tests PRIVATE gb_sdl_frontend)
+        add_test(NAME SDL_Joypad_Tests COMMAND sdl_joypad_tests)
+        set_tests_properties(SDL_Joypad_Tests PROPERTIES
+            ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_RENDER_DRIVER=software"
+            TIMEOUT 15)
+
         add_executable(sdl_frontend_tests tests/test_sdl_frontend.c)
         target_link_libraries(sdl_frontend_tests PRIVATE gb_sdl_frontend)
         add_test(NAME SDL_Frontend_Tests COMMAND sdl_frontend_tests)
@@ -186,6 +195,10 @@ if(BUILD_TESTING)
     add_test(NAME Window_Diagnostic_ROM COMMAND window_diagnostic_tests
         "${PROJECT_SOURCE_DIR}/tests/diagnostic/window.gb")
 
+    add_executable(ppu_sprite_tests tests/test_ppu_sprites.c)
+    target_link_libraries(ppu_sprite_tests PRIVATE gbcore)
+    add_test(NAME PPU_Sprite_Tests COMMAND ppu_sprite_tests)
+
     add_executable(ppu_window_tests tests/test_ppu_window.c)
     target_link_libraries(ppu_window_tests PRIVATE gbcore)
     add_test(NAME PPU_Window_Tests COMMAND ppu_window_tests)
@@ -197,6 +210,14 @@ if(BUILD_TESTING)
     add_executable(ppu_tests tests/test_ppu.c)
     target_link_libraries(ppu_tests PRIVATE gbcore)
     add_test(NAME PPU_Tests COMMAND ppu_tests)
+
+    add_executable(joypad_tests tests/test_joypad.c)
+    target_link_libraries(joypad_tests PRIVATE gbcore)
+    add_test(NAME Joypad_Tests COMMAND joypad_tests)
+
+    add_executable(dma_tests tests/test_dma.c)
+    target_link_libraries(dma_tests PRIVATE gbcore)
+    add_test(NAME DMA_Tests COMMAND dma_tests)
 
     add_executable(timer_tests tests/test_timer.c)
     target_link_libraries(timer_tests PRIVATE gbcore)

@@ -20,8 +20,10 @@ cmake --build build -j2
 The diagnostic shows grayscale bars, checkerboard and X tiles in a 480 × 432
 window (3× native resolution). Resize freely; integer nearest-neighbor scaling
 keeps pixel edges crisp, with white letterboxing around nonmatching sizes.
-Press **Escape** or close the window to exit. This iteration does not map keys
-to the Game Boy joypad, add audio, or implement any new PPU features.
+Press **Escape** or close the window to exit. Arrow keys control the D-pad,
+Z/X are A/B, Enter is Start and Backspace is Select. Focus loss releases held
+buttons. See [JOYPAD.md](JOYPAD.md) for input mapping and controller behavior.
+Audio remains unimplemented.
 
 SDL is opt-in. For a build that requires no SDL development files:
 
@@ -43,8 +45,9 @@ The frontend is subject to the same ROM/mapper limits as that executable.
 | `src/frontend/main.c` | Loads ROM, initializes CPU/bus, polls events, steps CPU, presents completed frames and acknowledges the frame latch |
 | `sdl_frontend_init()` | Initializes SDL video/timer, opens a resizable window, creates an accelerated renderer with software fallback, configures scaling and creates a streaming texture |
 | `sdl_frontend_present()` | Reads the PPU framebuffer, converts shades to ARGB8888, uploads the completed image and draws it; does not mutate the PPU |
-| `sdl_frontend_poll()` | Drains events, handles Close/Escape and requests cached redraws for expose/resize events |
+| `sdl_frontend_poll()` | Drains events, updates bound joypad levels, handles focus/Close/Escape and requests cached redraws |
 | `redraw()` (private) | Clears letterboxing, copies the last uploaded texture and presents it; never reads a partially drawn PPU framebuffer |
+| `sdl_frontend_bind_joypad()` | Binds the core Joypad and IF byte after initialization; input events never advance the hardware clock |
 | `sdl_frontend_destroy()` | Destroys texture, renderer and window in reverse order, then shuts down SDL; also handles partial startup and repeated cleanup safely |
 | `report_error()` (private) | Reports the failed SDL operation and SDL's error string |
 | `pace()` (private to runner) | Uses host performance counters and bounded sleeps to limit wall-clock speed without altering simulated hardware time |
@@ -59,7 +62,7 @@ the core's memory layout or timing APIs.
 ```text
 cpu_step()
   -> existing timed CPU accesses/internal cycles
-     -> memory_tick() -> timer_tick() + ppu_tick()
+     -> memory_tick() -> timer_tick() + ppu_tick() + dma_tick()
   -> runner checks ppu.frame_ready
      -> sdl_frontend_present() uploads the completed framebuffer
      -> runner clears frame_ready only after success
@@ -77,7 +80,8 @@ Events are polled after at most 256 CPU steps, independently of frame readiness.
 This remains responsive while LCD is disabled or the CPU is halted. HALT still
 uses the normal `cpu_step()` idle path, so hardware continues ticking. STOP
 leaves the last image visible while processing host events with a short sleep;
-there is no joypad wake implementation. A locked CPU is reported and exits with
+a new selected joypad input edge wakes it through cpu_step(). Host pacing resets
+after that pause rather than catching up the stopped interval. A locked CPU is reported and exits with
 failure. With LCD disabled, the last uploaded texture remains visible until the
 next completed frame; the frontend does not manufacture new frame-ready events.
 

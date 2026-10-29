@@ -7,6 +7,16 @@ Dates use Africa/Dar_es_Salaam time.
 
 ## Current status
 
+- FF00 joypad matrix/interrupts are connected to SDL keyboard events, with
+  focus-safe releases, HALT handling and basic selected-edge STOP wake.
+
+- Mode 2 selects up to ten sprites from real OAM; the shared compositor supports
+  DMG sprite sizes, flips, transparency, OBP palettes and BG/Window priority.
+
+- OAM DMA copies progressively through the shared clock; CPU grants enforce
+  HRAM-only active DMA access and LCD-mode VRAM/OAM restrictions. Raw bus
+  access remains untimed and available to devices/tests.
+
 - Optional bounded graphics tracing follows one pixel from bus accesses to PPU
   output and SDL presentation; compile-time and runtime defaults are off.
 
@@ -21,7 +31,7 @@ Dates use Africa/Dar_es_Salaam time.
   of BG scrolling; fixed timing and documented hardware quirks remain simplified.
 - Cartridge support remains limited to fixed 32 KiB mapping without external RAM.
 - The cartridge loader defect has been fixed by rejecting unsupported RAM-bearing
-  mapper types. The nine headless suites pass; SDL + trace suites also pass (14/14 in Debug
+  mapper types. The twelve headless suites pass; SDL + trace suites also pass (18/18 in Debug
   and ASan/UBSan);
   LeakSanitizer is unavailable in this traced execution environment.
 
@@ -479,3 +489,194 @@ cmake --build build -j2
 ./build/gb_sdl tests/diagnostic/window.gb
 ./build/window_diagnostic_tests tests/diagnostic/window.gb build/window.pgm
 ```
+
+## 2026-10-29 — Progressive OAM DMA and CPU bus restrictions
+
+### Implementation
+
+- Added `include/dma.h` / `src/dma.c` and embedded DMA state in Memory. FF46
+  schedules a transfer/restart instead of copying OAM immediately. Current model:
+  eight startup T-cycles, then 160 bytes at four T-cycles per byte (640 active
+  transfer cycles, 648 total sampled-write-to-completion cycles).
+- Restart preserves existing OAM and lets the previous transfer advance during
+  the new startup delay; the latest pending FF46 request wins. Each byte reads
+  its source live at transfer time. No new allocation or independent clock.
+- Added untimed `memory_cpu_read/write()` policy wrappers and routed timed CPU
+  data, fetch and stack helpers through them. Active DMG DMA allows HRAM only,
+  with an FF46 write exception for restart. Blocked reads return FF; writes are
+  ignored. Internal IF/IE interrupt-controller operations remain raw.
+- Added CPU PPU-mode restrictions: VRAM blocked in mode 3, OAM blocked in modes
+  2/3, both accessible with LCD disabled or during HBlank/VBlank. Raw bus accesses
+  remain untimed and available to test fixtures, debuggers and devices.
+- Added `memory_dma_read()` to use the raw mapped source without falsely logging
+  autonomous DMA reads as CPU ROM graphics reads.
+- Integrated DMA into `memory_tick()`: pending/active transfers interleave timer,
+  PPU and DMA per T-cycle, then return to batched ticking immediately when DMA
+  ends. All share the same elapsed time; trace observer time increments once.
+- Added [DMA.md](DMA.md) documenting timing, APIs, CPU ownership, source pages,
+  startup/restart assumptions and remaining inaccuracies. Updated related
+  architecture and README documentation.
+
+### Transfer tests and regressions
+
+- `DMA_Tests` verifies startup/byte/completion boundaries, live reads, restart,
+  source mapping, absent/unsupported sources, no overrun and batching equivalence.
+- CPU tests execute a real HRAM DMA/wait routine, verify blocked data/stack
+  writes, blocked ROM fetch FF/RST 38, actual CPU FF46 restart, HRAM permissions,
+  CPU OAM reads at adjacent completion boundaries and VRAM mode-boundary reads.
+- HALT integration checks DMA completion with simultaneous timer/VBlank
+  requests, unchanged CPU cycle totals and correctly advancing PPU time.
+- Trace-enabled test verifies DMA ROM reads are not mislabeled as CPU reads.
+- SDL-enabled Debug, trace off: **13/13 CTest suites passed**.
+- SDL + trace-enabled Debug: **15/15 passed**.
+- SDL + trace-enabled ASan/UBSan: **15/15 passed**, no sanitizer diagnostics.
+  Leak checking remains disabled (`ASAN_OPTIONS=detect_leaks=0`) because of the
+  existing tracing/ptrace environment limitation. Existing CPU integer-conversion
+  compiler warnings remain; no new DMA warnings were emitted.
+- Headless, trace-disabled Debug: **10/10 passed**.
+- After adding the final CPU completion-boundary assertions, reran DMA_Tests in
+  Debug and ASan/UBSan: passed in both.
+- Reran all 11 individual CPU instruction ROMs, `instr_timing` and all three
+  individual `mem_timing` ROMs: **15/15 passed**. Temporary detailed logs are in
+  `/tmp/gb-background-regressions/dma/`.
+- `git diff --check`: passed. Existing PPU/Window/renderer, SDL diagnostics,
+  timer, memory and cartridge suites remain green.
+
+### Limits
+
+Startup/restart and CPU sampling use the existing machine-cycle access model,
+not every hardware pin phase. Source pages E0..FF deterministically supply FF;
+undocumented mirroring/open-bus behavior is not modeled. DMA source VRAM reads
+currently bypass PPU arbitration. Sprite-fetch/OAM corruption, CGB split buses,
+double speed and HDMA remain unimplemented. PPU access limits follow existing
+fixed mode lengths. No external DMA hardware-acceptance ROM suite was run; local
+schedule tests were informed by Pan Docs and hardware-tested Mooneye sources
+linked in DMA.md. No sprite rendering or other unrelated system was added.
+
+## 2026-10-29 — Mode-2 OAM selection and DMG sprite pixels
+
+### Implementation
+
+- Added a borrowed PPU OAM view and DMA-ownership signal, bound in memory_init()
+  to the actual bus-owned array/state. CPU writes, completed DMA and PPU selection
+  now use the same OAM data, with no extra clock or SDL dependency.
+- Mode 2 visits an entry every two dots, keeps the first ten Y-overlapping
+  objects in OAM order and snapshots Y/X/tile/flags/height/index. X-hidden entries
+  still count. Line/LCD transitions reset selection; detached OAM is safe.
+- Added 8×8 and 8×16 object tile fetching using the existing 2bpp row decoder,
+  unsigned 8000 addressing, paired even/odd tiles, full-object Y flip and X flip.
+- Added per-pixel DMG priority: first nontransparent object by smaller X and
+  earlier OAM tie, then apply the winner's behind-BG flag to the original
+  BG/Window color ID. Hidden winners still mask lesser objects. Color zero is
+  transparent before OBP mapping; palette-mapped white remains opaque.
+- Implemented OBP0/OBP1 selection, clipping, independent LCDC OBJ enable and
+  BG-disable behavior that leaves objects enabled. CGB-only flags are ignored.
+- Renamed the private combined renderer to render_scanline(). It commits one
+  final pixel to the existing framebuffer at fixed dot 252; SDL is unchanged.
+- Graphics trace now emits sprite-visible pixels with OAM entry/index, flags,
+  original OAM tile, effective row address/bytes, color, OBP and final shade,
+  replacing the obscured lower-layer record instead of logging both.
+- Added [SPRITES.md](SPRITES.md) with function/state responsibilities, bus binding,
+  priority rules and explicit remaining hardware approximations. Updated related
+  PPU, Window, DMA, trace and README documentation.
+
+### Tests and results
+
+- Added PPU_Sprite_Tests for two-dot selection progress, dot-80 final entry,
+  snapshots, CPU OAM-write rejection, first-ten limit, X/Y-hidden objects,
+  LCD resets, detached state and Memory-copy pointer rebinding.
+- Compared every pixel across 224 full-frame geometry fixtures spanning sizes,
+  both flips, both palettes, clipping, highest/odd tile IDs and BG addressing
+  modes. Explicit cases cover transparent zero versus opaque white, ignored
+  CGB flag bits, X/OAM ties and raw-color BG/Window priority including masking
+  lower sprites behind the background.
+- DMA integration tests confirm transferred OAM becomes visible, active DMA
+  suppresses affected object rows, and later Mode-2 scans see completed data.
+  Batch/single-dot framebuffer, timing and IF behavior agree.
+- Trace-enabled test confirms one final sprite record at (20,40) with correct
+  OAM/row/color/palette provenance while BG is disabled.
+- SDL-enabled trace-disabled Debug: **14/14 CTest suites passed**.
+- SDL + trace-enabled Debug: **16/16 passed**.
+- SDL + trace-enabled ASan/UBSan: **16/16 passed**, no sanitizer diagnostics.
+  Leak detection remains disabled (ASAN_OPTIONS=detect_leaks=0) because of the
+  existing ptrace environment limitation. Existing CPU conversion warnings
+  remain; no new sprite compiler warnings were emitted.
+- Separate headless, trace-disabled Debug build: **11/11 passed**.
+- Reran all 11 individual cpu_instrs ROMs, instr_timing and the three individual
+  mem_timing ROMs: **15/15 passed**. Temporary logs:
+  `/tmp/gb-background-regressions/sprites/`.
+- Existing CPU, timer, memory, cartridge, PPU, Window, renderer, DMA, graphics
+  trace and SDL diagnostic suites remain green. git diff --check passed.
+
+### Remaining approximations
+
+The fixed 80-dot Mode 2 / 172-dot Mode 3 schedule is retained. Sprite fetch stalls
+and FIFO phases are absent; all four OAM attributes/height are captured together
+per entry and tile bytes/palettes are sampled at row commit. Mid-scanline OAM,
+LCDC-size and palette effects are therefore simplified. Active DMA skips OAM
+selection and suppresses object drawing at row commit rather than reproducing
+mixed/corrupted object words. CGB sprite priority/banks/palettes are not modeled.
+No external sprite hardware acceptance suite or physical DMG was tested. APU and
+other unrelated systems were not added.
+
+## 2026-10-29 — FF00 joypad controller and SDL keyboard input
+
+### Implementation
+
+- Added SDL-independent Joypad state/module with eight physical button bits,
+  active-low selected row reads, read-only input lines and writable FF00 select
+  bits 4/5. Bits 6/7 read high; reset releases all buttons and selects neither row.
+- Routed FF00 through the mapped bus rather than the generic I/O byte array.
+  CPU accesses retain their timing and DMA grants; host physical input updates
+  bypass CPU grants and never advance emulated time.
+- Selected high-to-low input transitions OR IF bit 4, preserving other bits.
+  Selection changes can expose a held button and request an edge. Both selected
+  rows share lines; repeated/held levels and releases do not generate false IRQs.
+- Added basic selected-edge STOP wake consumption at CPU instruction boundaries.
+  Waking is independent of IE/IME; normal interrupt dispatch still uses them.
+  Edges consumed while running do not remain to wake a later STOP. Existing
+  explicit cpu_wake_stop() remains supported and instruction cycle counts remain
+  unchanged. SDL runner permits wake steps and resets host pacing after STOP.
+- Bound SDL input to borrowed Joypad/IF state. Mapping: arrows=D-pad, Z=A, X=B,
+  Enter=Start, Backspace=Select; Escape remains host quit. Uses physical scancodes,
+  ignores repeats and unfocused presses, and processes taps in event order.
+- Focus loss, minimizing, unbinding, quit and destruction release held buttons.
+  Core code contains no SDL headers or CPU/frontend callbacks.
+- Added [JOYPAD.md](JOYPAD.md) covering controls, register/IRQ rules, diagram,
+  APIs, lifetime, STOP and timing limits. Updated README, SDL and CPU docs.
+
+### Verification
+
+- New Joypad_Tests covers all button masks and 262,144 pairwise physical-level
+  transitions across all row selections, FF00 masks, selection-generated edges,
+  shared lines, IF preservation, CPU LDH access timing, DMA restrictions,
+  HALT behavior, vector 0060 and STOP wake/no-stale-wake behavior.
+- New SDL_Joypad_Tests injects all eight key mappings, repeat and duplicate
+  presses, key release, quick taps, simultaneous shared-line inputs, focus loss,
+  minimize/refocus, detach/quit cleanup and an SDL-event-to-CPU STOP wake sequence.
+  Input polling itself leaves CPU/timer/PPU cycle counts unchanged.
+- Initial Joypad_Tests fixture incorrectly expected an interrupt when switching
+  from held Right to held A on their already-low shared line. Corrected the
+  fixture to release Right before testing a genuine selection-generated edge;
+  the controller correctly produced no edge for the original shared-low case.
+- SDL-enabled trace-disabled Debug: **16/16 passed**.
+- SDL + trace-enabled Debug: **18/18 passed**.
+- SDL + trace-enabled ASan/UBSan: **18/18 passed**, no sanitizer diagnostics.
+  Leak checking remains disabled (ASAN_OPTIONS=detect_leaks=0) due to the existing
+  ptrace environment limitation. Existing CPU conversion compiler warnings
+  remain; no new joypad compiler warnings were emitted.
+- Separate headless, trace-disabled Debug configuration: **12/12 passed**.
+- Reran all 11 individual cpu_instrs ROMs, instr_timing and three individual
+  mem_timing ROMs: **15/15 passed**. Temporary logs:
+  `/tmp/gb-background-regressions/joypad/`.
+- git diff --check passed. No current test failures.
+
+### Limits
+
+Rows/input levels update immediately; mechanical bounce and electrical settling
+are not modeled. STOP wake is the existing simplified CPU model plus selected
+input edges, not complete hardware STOP/DIV/startup behavior. SGB protocols,
+multiplayer, joysticks and configurable mappings are absent. Opposing directions
+can be held together as physical matrix bits. SDL event tests used dummy/software
+video, not a physical desktop keyboard session. Headless execution defaults to
+released buttons unless its embedding uses the new input API.

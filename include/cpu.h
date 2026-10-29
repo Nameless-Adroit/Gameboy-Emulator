@@ -57,11 +57,11 @@ bool get_flag(CPU *cpu, CPUFlag flag);
 
 void push_word(CPU *cpu, Memory *memory, uint16_t value);
 uint16_t pop_word(CPU *cpu, Memory *memory);
-// Returns T-cycles (4 per machine cycle). STOP returns 0 until explicit wake.
+// Returns T-cycles (4 per machine cycle). STOP returns 0 until selected joypad input or explicit wake.
 // Advances peripherals during bus accesses and internal machine cycles.
 // Returned time is already clocked: callers must not tick it again.
 unsigned cpu_step(CPU *cpu, Memory *memory);
-void cpu_wake_stop(CPU *cpu); // Joypad/peripheral integration calls this.
+void cpu_wake_stop(CPU *cpu); // Explicit wake hook; input edges also wake in cpu_step.
 
 
 #endif

@@ -44,10 +44,10 @@ without support fails with instructions to enable the CMake option.
 flowchart TD
     FILE[ROM file on host disk] -->|load_rom: fread and memcpy, C startup code| CART[Cartridge.rom]
     CART -->|cartridge_read via memory_read| ROMREAD[Timed CPU ROM data read]
-    ROMREAD -->|execute: e.g. LD A,HL+ then LD DE,A| BUS[cpu_write then memory_write]
+    ROMREAD -->|execute: e.g. LD A,HL+ then LD DE,A| BUS[cpu_write then memory_cpu_write then memory_write]
     BUS -->|8000-9FFF| VRAM[Memory.vram]
     BUS -->|FF40-FF4B except FF46| REG[ppu_write: LCD registers]
-    VRAM -->|borrowed const pointer: no CPU instruction| LINE[render_background_line]
+    VRAM -->|borrowed const pointer: no CPU instruction| LINE[render_scanline]
     REG --> LINE
     LINE --> MAP[Select tile map and tile ID]
     MAP --> TILE[Select tile address and two row bytes]
@@ -62,13 +62,13 @@ flowchart TD
 | Stage | Actual implementation |
 | --- | --- |
 | Load cartridge | `load_rom()` in `src/cartridge.c`, host `fread()` into a temporary buffer, then `memcpy()` into `Cartridge.rom` |
-| Read ROM on CPU bus | `cpu_read()` → `memory_read()` → `cartridge_read()`; `cpu_fetch()` distinguishes instruction/operand fetches so they are not logged as graphics data |
+| Read ROM on CPU bus | `cpu_read()` → `memory_cpu_read()` → `memory_read()` → `cartridge_read()`; `cpu_fetch()` distinguishes instruction/operand fetches so they are not logged as graphics data |
 | Execute copy instructions | `cpu_step()` → `execute()`; indirect loads such as `LD A,(HL+)` and `LD (DE),A` read/write through timed helpers |
-| Commit CPU VRAM write | `cpu_write()` advances the access cycle, then `memory_write()` stores into `Memory.vram` |
+| Commit CPU VRAM write | `cpu_write()` advances the access cycle, then `memory_cpu_write()` checks grants and `memory_write()` stores accepted data into `Memory.vram` |
 | Change LCD settings | `memory_write()` routes PPU register writes to `ppu_write()` and flushes immediate STAT requests without adding time |
-| Read map/tile bytes | `render_background_line()` reads the attached bus-owned VRAM directly, using LCDC map/address selection and SCX/SCY |
+| Read map/tile bytes | `render_scanline()` reads the attached bus-owned VRAM directly, using LCDC map/address selection and SCX/SCY |
 | Decode 2bpp | `ppu_decode_tile_row()`; `ppu_decode_tile()` is the public full-tile utility but the scanline renderer uses only the row function |
-| Generate shade/write image | `render_background_line()` maps the selected decoded color through BGP and assigns `output[x]`, an alias of `ppu->framebuffer[ppu->ly][x]` |
+| Generate shade/write image | `render_scanline()` maps the selected decoded color through BGP and assigns `output[x]`, an alias of `ppu->framebuffer[ppu->ly][x]` |
 | Hand off completed image | `ppu_tick()` sets `frame_ready` at VBlank; `src/frontend/main.c` checks after each CPU step and clears the latch after successful presentation |
 | Convert/upload/present | `sdl_frontend_present()` maps shades to ARGB8888 and calls `SDL_UpdateTexture()`; private `redraw()` calls `SDL_RenderCopy()` and `SDL_RenderPresent()` |
 
@@ -102,8 +102,9 @@ monitor refreshes.
   rules still apply: for example, a write to read-only LY is logged but ignored.
 - `PIXEL`: the actual map address, tile ID, first tile-row byte address, both row
   bytes, decoded color ID, BGP, mapped shade and assigned framebuffer value.
-  `layer=background` or `layer=window` identifies the final composed layer;
-  a Window-covered pixel is logged once with Window provenance.
+  `layer=background`, `layer=window` or `layer=sprite` identifies the final composed layer;
+  a Window-visible pixel is logged once with Window provenance; an object-visible
+  pixel uses OAM/OBP provenance instead.
   `row_address` is a CPU-visible VRAM address, not a host pointer. Its following
   byte is at `row_address+1`.
 - A blank `PIXEL` explains `BG-disabled` or `VRAM-detached` and uses `n/a` for
@@ -202,3 +203,19 @@ traced-versus-untraced CPU/bus/timer/PPU/framebuffer comparison.
 record with the expected ARGB value using the dummy/software backend. Existing
 CPU, timer, memory, cartridge, renderer, PPU and SDL tests remain registered.
 See [PROGRESS.md](PROGRESS.md) for current-run results and environment limits.
+
+## DMA and CPU bus grants
+
+[DMA.md](DMA.md) documents progressive OAM transfers and the CPU-specific bus
+policy. Blocked CPU accesses do not reach raw bus trace hooks. DMA reads bypass
+CPU grants and do not emit CPU ROM-data records. Raw device/debugger accesses
+remain untimed and independent of CPU bus ownership.
+
+## Sprite pixels
+
+[SPRITES.md](SPRITES.md) documents Mode-2 selection and sprite composition. A
+sprite-visible selected coordinate emits a single final pixel record containing
+its OAM entry/index, flags, original OAM tile ID, effective row address and bytes,
+raw color, OBP byte and framebuffer shade. Sprites have no tile-map lookup, so
+this format replaces BG map/BGP fields with OAM/OBP provenance. DMA conflicts
+and sprite fetch timing remain approximations.

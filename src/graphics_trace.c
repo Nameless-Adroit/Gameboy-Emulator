@@ -155,6 +155,16 @@ void graphics_trace_pixel(GraphicsTrace *t, unsigned map_address, unsigned tile,
         window ? "window" : "background");
 }
 
+void graphics_trace_sprite_pixel(GraphicsTrace *t, unsigned index, unsigned tile,
+    unsigned flags, unsigned address, unsigned low, unsigned high,
+    unsigned color, unsigned obp, unsigned shade)
+{
+    event(t, t->frame, t->event_cycle,
+        "PIXEL xy=%u,%u layer=sprite oam=%04X index=%u oam_tile=%02X flags=%02X row_address=%04X bytes=%02X,%02X color=%u OBP=%02X palette=%u framebuffer=%u",
+        t->x, t->y, 0xFE00 + index * 4, index, tile, flags, address,
+        low, high, color, obp, shade, shade);
+}
+
 void graphics_trace_blank(GraphicsTrace *t, const char *reason)
 {
     event(t, t->frame, t->event_cycle, "PIXEL xy=%u,%u source=%s map=n/a tile=n/a row_address=n/a bytes=n/a color=n/a palette=n/a framebuffer=0", t->x, t->y, reason);
