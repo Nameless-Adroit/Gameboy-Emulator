@@ -53,7 +53,8 @@ static void channel_timers(void)
     memory_write(&m, 0xFF30, 0xA5); memory_write(&m, 0xFF31, 0xC3);
     memory_write(&m, 0xFF1A, 0x80); memory_write(&m, 0xFF1C, 0x20);
     memory_write(&m, 0xFF1D, 0xFF); memory_write(&m, 0xFF1E, 0x87);
-    memory_tick(&m, 2); CHECK(m.apu.channels[2].wave_sample == 5);
+    memory_tick(&m, 7); CHECK(m.apu.channels[2].wave_sample == 0);
+    memory_tick(&m, 1); CHECK(m.apu.channels[2].wave_sample == 5);
     memory_tick(&m, 2); CHECK(m.apu.channels[2].wave_sample == 12);
     memory_write(&m, 0xFF1A, 0); CHECK(!m.apu.channels[2].enabled);
     memory_write(&m, 0xFF21, 0xF0); memory_write(&m, 0xFF22, 0);

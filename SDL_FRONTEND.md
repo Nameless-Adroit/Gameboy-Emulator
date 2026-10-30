@@ -23,7 +23,7 @@ keeps pixel edges crisp, with white letterboxing around nonmatching sizes.
 Press **Escape** or close the window to exit. Arrow keys control the D-pad,
 Z/X are A/B, Enter is Start and Backspace is Select. Focus loss releases held
 buttons. See [JOYPAD.md](JOYPAD.md) for input mapping and controller behavior.
-Audio remains unimplemented.
+Audio playback is implemented in a separate module; see [AUDIO.md](AUDIO.md).
 
 SDL is opt-in. For a build that requires no SDL development files:
 
@@ -34,7 +34,9 @@ ctest --test-dir build --output-on-failure
 ```
 
 `gb_sdl` is an additional executable; `gb` keeps its existing headless behavior.
-The frontend is subject to the same ROM/mapper limits as that executable.
+Both runners support ROM-only and standard MBC1 cartridges. The SDL runner
+loads/saves battery RAM beside the ROM as `game.gb.sav`; headless execution
+keeps persistence explicit. See [MBC1.md](MBC1.md) for supported boards and limits.
 
 ## Ownership and function responsibilities
 

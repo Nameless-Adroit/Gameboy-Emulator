@@ -86,7 +86,7 @@ int main(void)
     assert(cartridge_read(&cartridge, 0x4000) == 0x56);
     assert(cartridge_read(&cartridge, 0x7FFF) == 0x78);
     cartridge_write(&cartridge, 0x2000, 2);
-    assert(cartridge_read(&cartridge, 0x4000) == 0x56);
+    assert(cartridge_read(&cartridge, 0x4000) == 0x12); // Bank 2 mirrors bank 0 on a two-bank chip.
 
     // RAM-bearing mapper types cannot be supported merely by declaring no RAM.
     // Reject both 02 (MBC1+RAM) and 03 (MBC1+RAM+battery), preserving state.
@@ -115,6 +115,7 @@ int main(void)
     assert(cartridge.header.type == 1);
     assert(cartridge.header.rom_size == ROM_SIZE);
     assert(cartridge_read(&cartridge, 0) == 0x12);
+    cartridge_destroy(&cartridge);
     puts("All cartridge tests passed!");
     return 0;
 }

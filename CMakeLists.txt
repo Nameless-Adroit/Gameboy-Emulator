@@ -102,7 +102,10 @@ add_library(gbcore STATIC
     src/cpu.c
     src/memory.c
     src/cartridge.c
+    src/mbc1.c
+    src/cartridge_save.c
     src/timer.c
+    src/serial.c
     src/dma.c
     src/audio/apu.c
     src/audio/apu_channels.c
@@ -229,6 +232,20 @@ if(BUILD_TESTING)
     target_link_libraries(apu_tests PRIVATE gbcore)
     add_test(NAME APU_Tests COMMAND apu_tests)
 
+    add_executable(apu_wave_tests tests/test_apu_wave.c)
+    target_link_libraries(apu_wave_tests PRIVATE gbcore)
+    add_test(NAME APU_Wave_Tests COMMAND apu_wave_tests)
+
+    add_executable(blargg_sound_tests tests/test_blargg_sound.c)
+    target_link_libraries(blargg_sound_tests PRIVATE gbcore)
+    file(GLOB dmg_sound_roms "${PROJECT_SOURCE_DIR}/tests/gb-test-roms/dmg_sound/rom_singles/*.gb")
+    foreach(rom IN LISTS dmg_sound_roms)
+        get_filename_component(rom_name "${rom}" NAME_WE)
+        string(SUBSTRING "${rom_name}" 0 2 rom_number)
+        add_test(NAME DMG_Sound_${rom_number} COMMAND blargg_sound_tests "${rom}")
+        set_tests_properties(DMG_Sound_${rom_number} PROPERTIES TIMEOUT 120)
+    endforeach()
+
     add_executable(joypad_tests tests/test_joypad.c)
     target_link_libraries(joypad_tests PRIVATE gbcore)
     add_test(NAME Joypad_Tests COMMAND joypad_tests)
@@ -240,6 +257,14 @@ if(BUILD_TESTING)
     add_executable(timer_tests tests/test_timer.c)
     target_link_libraries(timer_tests PRIVATE gbcore)
     add_test(NAME Timer_Tests COMMAND timer_tests)
+
+    add_executable(serial_tests tests/test_serial.c)
+    target_link_libraries(serial_tests PRIVATE gbcore)
+    add_test(NAME Serial_Tests COMMAND serial_tests)
+
+    add_executable(mbc1_tests tests/test_mbc1.c)
+    target_link_libraries(mbc1_tests PRIVATE gbcore)
+    add_test(NAME MBC1_Tests COMMAND mbc1_tests)
 
     add_executable(cartridge_tests tests/test_cartridge.c)
     target_link_libraries(cartridge_tests PRIVATE gbcore)

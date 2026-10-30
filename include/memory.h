@@ -3,6 +3,7 @@
 
 #include "cartridge.h"
 #include "timer.h"
+#include "serial.h"
 #include "apu.h"
 #include "joypad.h"
 #include "dma.h"
@@ -32,6 +33,7 @@ typedef struct Memory
 
     Joypad joypad;
     Timer timer;
+    Serial serial;
     APU apu;
     DMA dma;
     PPU ppu;
@@ -42,7 +44,10 @@ typedef struct Memory
 } Memory;
 
 // Initialization
+/* Initialize fresh storage. Destroy an owning instance before reinitializing. */
 void memory_init(Memory *memory);
+/* Release cartridge-owned storage; call after the frontend releases borrowed state. */
+void memory_destroy(Memory *memory);
 
 // Raw memory bus interface: reads and writes never advance time.
 uint8_t memory_read(Memory *memory, uint16_t address);

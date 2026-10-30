@@ -99,8 +99,10 @@ The bus maps cartridge ROM, VRAM, WRAM and its echo, OAM, HRAM and I/O.
 ROM writes are protected; timer and LCD registers have device-specific handlers.
 CPU-facing access enforces LCD VRAM/OAM mode restrictions and HRAM-only access
 during active DMG OAM DMA. Raw bus access remains available to devices/tests.
-The ROM loader rejects files larger than 32 KiB instead of silently truncating.
-A 32 KiB file fitting the loader is not a guarantee of cartridge compatibility.
+The cartridge module supports ROM-only and standard MBC1 banking up to 2 MiB,
+with gated/banked external RAM and battery saves in the SDL runner. The loader
+checks exact declared sizes and board limits before replacing a cartridge.
+[MBC1.md](MBC1.md) explains banking, `.gb.sav` files and unsupported mapper types.
 
 Timer/DIV is implemented and continues clocking during HALT, including timer
 interrupt requests. The PPU implements LCD registers, 456-dot scanlines, 154-line
@@ -114,10 +116,37 @@ bus-owned VRAM, 2bpp tiles, both tile maps/addressing modes, BGP and SCX/SCY.
 timing, LCD startup quirks, the line-153 LY quirk and DMG STAT-write glitch are
 not implemented.
 
-Cycle-progressive OAM DMA is implemented; full MBC and an accurate
-serial device remain unfinished. See [DMA.md](DMA.md) for timing and bus policy. The runner
-prints the common serial-test convention and stops on STOP/lock-up or the step
-limit. Run `./build/ppu_tests` for PPU register, timing, interrupt and clock tests.
+Cycle-progressive OAM DMA is implemented. See [DMA.md](DMA.md) for timing and
+bus policy. Disconnected DMG serial transfers shift one bit per 512 T-cycles,
+receive FF after eight bits, clear SC bit 7 and request the serial interrupt.
+External-clock requests wait indefinitely without a peer. Link peers, CGB fast
+serial, divider-aligned startup/races, MBC2/MBC3/MBC5 and RTC remain unsupported.
+The test-ROM stdout byte sink now emits on completed serial transfers.
+The runner stops on STOP/lock-up or the step limit. Run `./build/ppu_tests` for
+PPU register, timing, interrupt and clock tests.
+
+The headless runner offers bounded CPU diagnostics independently of the graphics
+trace build option:
+
+```sh
+./build/gb roms/Mortal_Kombat.gb --steps 10000000 \
+  --cpu-trace-start 4000000 --cpu-trace-count 100 --cpu-trace-every 1 \
+  > /tmp/mk-output.log 2> /tmp/mk-cpu.log
+```
+
+Snapshots go to stderr before each selected step, with PC, SP, the current CPU
+bus opcode byte, CPU state, T-cycle count, IME/IE/IF, LY/STAT/LCDC, the selected
+4000–7FFF ROM bank, timer/serial registers and a framebuffer hash. `--cpu-trace`
+uses start 0, count 256 and stride 1; counts are limited to 4096, followed by
+one final snapshot and frame/change totals. Reads add no emulated time. A
+HALTed CPU or pending interrupt may not execute the displayed opcode byte.
+Frame hashes are diagnostic fingerprints, not proof of pixel accuracy.
+
+On 2026-10-30, Mortal Kombat's MIDWAY splash stall was traced to a missing serial
+completion interrupt: its polling loop at 0E24–0E28 waited for an ISR-owned WRAM
+flag. With the serial fix the same ROM reaches the title screen. MBC1, CPU,
+timer and PPU behavior were not changed for this fix. See [PROGRESS.md](PROGRESS.md)
+for the ROM checksum, evidence, test results and remaining uncertainty.
 
 CPU bus accesses consume four T-cycles each; internal cycles occur explicitly
 between accesses. Bus reads/writes sample or commit at the end of their machine

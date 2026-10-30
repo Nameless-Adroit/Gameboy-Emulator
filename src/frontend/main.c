@@ -58,8 +58,32 @@ int main(int argc, char **argv)
     // initializing the video subsystem or leaving partially created resources.
     if (!load_rom(&memory.cartridge, argv[1])) return EXIT_FAILURE;
     reset_cpu(&cpu, &memory);
-    if (!graphics_trace_start(&trace, &memory, &trace_options, stderr)) return EXIT_FAILURE;
-    if (!sdl_frontend_init(&frontend)) return EXIT_FAILURE;
+    if (!graphics_trace_start(&trace, &memory, &trace_options, stderr)) {
+        memory_destroy(&memory);
+        return EXIT_FAILURE;
+    }
+    /* Save files are host policy. Core mapper reads/writes never perform I/O.
+     * Append rather than replace the ROM extension to keep paths unambiguous. */
+    char *save_path = NULL;
+    if (memory.cartridge.battery) {
+        size_t length = strlen(argv[1]);
+        save_path = malloc(length + 5u);
+        if (save_path) {
+            memcpy(save_path, argv[1], length);
+            memcpy(save_path + length, ".sav", 5);
+        }
+        if (!save_path || !cartridge_load_save(&memory.cartridge, save_path)) {
+            fprintf(stderr, "Cannot initialize battery save\n");
+            free(save_path);
+            memory_destroy(&memory);
+            return EXIT_FAILURE;
+        }
+    }
+    if (!sdl_frontend_init(&frontend)) {
+        free(save_path);
+        memory_destroy(&memory);
+        return EXIT_FAILURE;
+    }
     sdl_frontend_bind_joypad(&frontend, &memory.joypad, &memory.io[0x0F]);
     if (!muted) (void)sdl_audio_init(&audio);
 
@@ -120,5 +144,10 @@ int main(int argc, char **argv)
         printf("Presented %lu frame(s)\n", frames);
     sdl_audio_destroy(&audio);
     sdl_frontend_destroy(&frontend);
+    /* A failed session must not overwrite an existing battery save. */
+    if (result == EXIT_SUCCESS && save_path && !cartridge_save(&memory.cartridge, save_path))
+        result = EXIT_FAILURE;
+    free(save_path);
+    memory_destroy(&memory);
     return result;
 }

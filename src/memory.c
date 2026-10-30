@@ -19,6 +19,11 @@ void memory_init(Memory *memory)
     ppu_attach_oam(&memory->ppu, memory->oam, &memory->dma.active);
 }
 
+void memory_destroy(Memory *memory)
+{
+    cartridge_destroy(&memory->cartridge);
+}
+
 // ------------------------------------------------------------
 // Read one byte from the CPU address space
 // ------------------------------------------------------------
@@ -68,6 +73,7 @@ static uint8_t read_bus(Memory *memory, uint16_t address, bool trace_rom)
     }
 
     if (address == 0xFF00) return joypad_read(&memory->joypad);
+    if (address == 0xFF01 || address == 0xFF02) return serial_read(&memory->serial, address);
     if (address >= 0xFF10 && address <= 0xFF3F) return apu_read(&memory->apu, address);
 
     // FF04-FF07: Timer registers have hardware-specific behavior.
@@ -145,8 +151,7 @@ void memory_write(Memory *memory,
         graphics_trace_write(memory->trace, memory->vram, memory->ppu.lcdc,
             memory->ppu.scx, memory->ppu.scy, address, value);
 #endif
-    // 0000-7FFF: ROM-only cartridge
-    // Writes do not alter ROM contents.
+    // 0000-7FFF: Cartridge mapper control (ROM bytes remain immutable).
     if (address <= 0x7FFF) {
         cartridge_write(&memory->cartridge, address, value);
         return;
@@ -192,6 +197,11 @@ void memory_write(Memory *memory,
         return;
     }
 
+    if (address == 0xFF01 || address == 0xFF02) {
+        serial_write(&memory->serial, address, value);
+        return;
+    }
+
     if (address >= 0xFF10 && address <= 0xFF3F) {
         apu_write(&memory->apu, address, value);
         return;
@@ -221,13 +231,6 @@ void memory_write(Memory *memory,
     if (address <= 0xFF7F) {
         memory->io[address - 0xFF00] = value;
 
-        // Temporary serial test-ROM output.
-        // Real serial timing will be implemented later.
-        if (address == 0xFF02 && value == 0x81) {
-            putchar(memory->io[0x01]);
-            fflush(stdout);
-        }
-
         return;
     }
 
@@ -246,6 +249,11 @@ static void tick_devices(Memory *memory, unsigned t_cycles)
     // APU observes the same divider interval as TIMA, including wraparound.
     apu_tick(&memory->apu, t_cycles, memory->timer.divider);
     timer_tick(&memory->timer, &memory->io[0x0F], t_cycles);
+    /* Retain the test-ROM console sink, now at completed transfer time. */
+    if (serial_tick(&memory->serial, &memory->io[0x0F], t_cycles)) {
+        putchar(memory->serial.outgoing);
+        fflush(stdout);
+    }
     ppu_tick(&memory->ppu, t_cycles, &memory->io[0x0F]);
     if (memory->dma.active || memory->dma.start_delay)
         dma_tick(&memory->dma, memory, t_cycles);

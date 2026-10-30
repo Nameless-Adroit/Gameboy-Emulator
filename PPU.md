@@ -187,6 +187,10 @@ This intentionally preserves all prior timing, HALT and interrupt-priority tests
 
 ## Cartridge defect and regression tests
 
+This paragraph records the loader fix at the background-renderer stage.
+Current [MBC1 support](MBC1.md) now accepts valid RAM-bearing boards while
+continuing to reject inconsistent headers, including types 02/03 with zero RAM.
+
 The old loader accepted types `02`/`03` (MBC1+RAM / MBC1+RAM+battery) when their
 header declared zero RAM, although the implementation provides no cartridge RAM.
 The documented supported types are `00` and `01` only. The fix restricts the

@@ -36,10 +36,10 @@ Dates use Africa/Dar_es_Salaam time.
 - DMG background and Window scanlines share 2bpp decoding, maps/addressing modes,
   BGP and the 160 × 144 framebuffer. Window positioning/counters are independent
   of BG scrolling; fixed timing and documented hardware quirks remain simplified.
-- Cartridge support remains limited to fixed 32 KiB mapping without external RAM.
-- The cartridge loader defect has been fixed by rejecting unsupported RAM-bearing
-  mapper types. The fourteen headless suites pass; SDL + trace suites also pass (21/21 in Debug
-  and ASan/UBSan);
+- Standard MBC1 supports ROM banking up to 2 MiB, both modes, gated/banked RAM,
+  and SDL battery saves. MBC2/MBC3/MBC5/RTC and MBC1M remain unsupported.
+- Fifteen headless suites pass; SDL + trace suites pass (22/22 in Debug and
+  ASan/UBSan). Newly unblocked sound singles pass 9/12; wave tests 09/10/12 fail;
   LeakSanitizer is unavailable in this traced execution environment.
 
 ## 2026-10-28 — CPU clock refactor (previous completed work)
@@ -785,3 +785,301 @@ quality require manual verification. Earlier Tetris launch evidence is unchanged
   agent and no automated tests were rerun. git diff --check passed.
 - ROM revision/checksum, exact sound fidelity, full-game completion and
   long-session stability were not reported as verified.
+
+## 2026-10-29 — Audio source comments and API explanations
+
+- Expanded comments across include/apu.h, the private audio interface, register
+  handling, channel sequencing, PCM mixer and SDL audio header/implementation.
+- Explained channel state and counter units, register masks/block offsets,
+  DAC versus generator activity, trigger/sweep side effects, divider bit 12 and
+  the eight sequencer steps. Explained wave nibble order, noise feedback,
+  duty masks, stereo routing, gain/scaling, rational sample cadence, high-pass
+  filter state, PCM frame/byte counts, ring overflow and SDL resource ownership.
+- Marked existing approximations where relevant; no audio behavior or timing
+  changed. Compared lexical C tokens before/after while excluding comments:
+  all seven edited source/header files matched exactly.
+- Rebuilt successfully and reran APU_Tests, Audio_Diagnostic_ROM and
+  SDL_Audio_Tests: **3/3 passed**. git diff --check passed. Full regressions and
+  sanitizer suites were not rerun for this comment-only task; previous results
+  remain recorded in their original entries.
+
+## 2026-10-29 — Standard MBC1 banking, RAM and battery saves
+
+### Implementation
+
+- Added standard MBC1 types 01/02/03 alongside ROM-only type 00. Supports
+  power-of-two ROMs up to 2 MiB, both banking modes, low-five-bit zero-bank
+  translation before physical size masking, secondary bank bits and mode-dependent
+  lower-window/RAM selection. Mapper writes never overwrite ROM or add time.
+- Added gated external RAM: low-nibble A enables it, other values disable it;
+  mode 1 selects four 8 KiB banks where fitted. Small RAM chips mirror missing
+  address lines. Rejects impossible large-ROM + 32 KiB RAM configurations,
+  inconsistent RAM-bearing headers and unsupported mapper families.
+- Kept mapper translation in private src/mbc1.c, loader/dispatch in cartridge.c,
+  and persistence in cartridge_save.c. Existing memory bus and DMA raw master
+  already route through the cartridge interface; CPU/PPU/APU timing is unchanged.
+- Preserved the inline two-bank ROM for existing fixtures; larger images use
+  owned heap storage. Added cartridge_destroy()/memory_destroy(), replacement
+  cleanup, and runner shutdown/startup-error cleanup. Failed replacements preserve
+  the old image, RAM and mapper state. Cartridge/Memory owners must not be copied.
+- Loader now checks exact declared ROM length rather than rejecting all files
+  above 32 KiB. Common repeated-logo 1 MiB MBC1M images are explicitly rejected;
+  that detection is heuristic and MBC1M remains unsupported.
+- SDL loads type 03 battery RAM from ROM-path + .sav, then saves on clean exit.
+  Missing saves start fresh; malformed existing saves stop startup. Writes use
+  a checked temporary file and rename. Failed sessions do not overwrite saves.
+  Headless runs do not implicitly access save files; explicit core import/export
+  APIs are available. Type 02 RAM remains volatile.
+- Added MBC1.md covering board limits, registers, worked bank examples, diagram,
+  ownership/lifetime, file policy and validation. Updated README, SDL, PPU and
+  audio docs to describe current capabilities while preserving historical entries.
+
+### Verification performed
+
+- New MBC1_Tests sweeps all byte values for low/secondary bank latches across
+  both modes on a 2 MiB ROM; verifies small-ROM masking, both ROM windows,
+  bank-zero translation, RAM banks/enable/mirroring, fixed large-ROM RAM,
+  battery save roundtrips, invalid file/header/save preservation, multicart
+  rejection and repeatable destruction. The multicart case was added after the
+  full runs and the MBC1 target was rebuilt/rerun in all three configurations.
+- Executes CPU instructions that switch banks and jump into selected ROM;
+  checks exact CPU/divider cycles. DMA reads selected ROM and enabled/disabled
+  cartridge RAM, while CPU writes during DMA remain denied.
+- Updated the old fixed-mapping assertion: writing bank 2 on a two-bank MBC1
+  chip now correctly mirrors physical bank 0. Existing invalid-load/parser
+  coverage and rejection of RAM-bearing types with zero declared RAM remain.
+- Complete SDL + trace Debug CTest: **22/22 passed**.
+- Complete SDL + trace ASan/UBSan CTest: **22/22 passed**; no sanitizer diagnostics.
+  ASAN_OPTIONS=detect_leaks=0 retains the existing ptrace/LeakSanitizer workaround.
+  Existing CPU conversion warnings remain; no new mapper warnings were emitted.
+- Complete headless, trace-disabled Debug CTest: **15/15 passed**.
+- All 11 individual cpu_instrs, instr_timing and three individual mem_timing
+  ROMs: **15/15 passed**. Logs: /tmp/gb-background-regressions/mbc1/.
+- SDL battery smoke used a synthetic 64 KiB RAM-bearing diagnostic. A Debug
+  launch read byte 31, CPU incremented it to 32, and exit persisted it; a second
+  ASan/UBSan launch read 32 and persisted 33. Both presented two frames with
+  dummy/software drivers. A malformed save was rejected without overwriting it.
+  Fixtures were confined to /tmp/gb-mbc1-sdl-smoke/.
+- All twelve previously loader-blocked dmg_sound singles now execute with valid
+  DE B0 61 result signatures. **9/12 pass** (01–08 and 11). **09-wave read while
+  on, 10-wave trigger while on and 12-wave write while on fail**, each status 01.
+  These expose the documented active-wave APU approximations; APU implementation
+  was not changed in this mapper task. Logs/results:
+  /tmp/gb-mbc1-sound-regressions/.
+- git diff --check passed. No CTest failures; three external sound ROM failures
+  remain explicitly recorded above.
+
+### Limits
+
+Only standard MBC1 and ROM-only boards are implemented. MBC1M, MBC2, MBC3/RTC,
+MBC5 and nonstandard boards are unsupported. Mapper validation uses synthetic
+bank fixtures and CPU/audio ROMs rather than a dedicated mapper hardware
+acceptance suite or physical cartridges. Persistence is a raw RAM snapshot,
+not a save state: no autosave, concurrent-instance locking, power-loss durability
+or forced-termination recovery is promised. The existing DMG timing/graphics
+and wave-channel approximations remain unchanged. Tetris's earlier user-reported
+play-with-sound milestone is preserved; no new manual game compatibility claim
+is inferred from this implementation.
+
+## 2026-10-30 — Wave investigation: fresh baseline and initial implementation
+
+- Read Pan Docs Audio Registers/Audio Details (upstream Markdown), bundled
+  blargg dmg_sound sources 09/10/12, SameSuite CH3 delay test and SameBoy's
+  hardware observations. DMG active RAM accesses share the selected fetch byte;
+  other reads return FF and writes are ignored. Retrigger corruption uses the
+  upcoming byte, copying byte 0 or an aligned four-byte block. SameBoy records
+  physical DMG-B unit variation; the target is the common blargg behavior.
+- Before edits, freshly configured/built SDL + graphics-trace Debug in
+  /tmp/gb-wave-debug: all 22 CTests passed. Reran all twelve dmg_sound singles:
+  01–08 and 11 passed, 09/10/12 failed status 01; every result had DE B0 61.
+  These are current baseline results, independently rerun from earlier entries.
+  Logs: /tmp/gb-wave-results/baseline/.
+- Added DMG fetch-window RAM arbitration, upcoming-fetch retrigger corruption,
+  six-T-cycle wave startup latency and inactive CH3 sample retention. Updated
+  the old immediate-start timing assertion to check the startup delay. Further
+  focused tests and post-change ROM/regression checks are pending.
+
+## 2026-10-30 — Initial wave fix verification and regression coverage
+
+- Fresh post-change run of all twelve dmg_sound singles using the headless
+  runner: **12/12 pass**, status 00 and DE B0 61 for every ROM, including
+  formerly failing 09/10/12. Logs: /tmp/gb-wave-results/after/.
+- Reran existing SDL + trace Debug CTests after the behavioral change:
+  **22/22 passed**. No previous CTest was removed or disabled. The existing
+  wave-period assertion now includes the documented startup latency; its
+  subsequent two-cycle sample-period check remains intact.
+- Added APU_Wave_Tests covering all 16 CPU addresses at all 32 sample positions,
+  both T-cycles of the access window and rejection after it, ignored writes,
+  retained output on accepted RAM writes/retrigger/disable, all eight retrigger
+  phases at every position (including wraparound), the disable-before-trigger
+  workaround, inactive DAC-on access, length expiry, power-off and batch equality.
+- Added a signature/status-checking sound ROM runner and CTest registration of
+  every bundled dmg_sound single. Missing results/timeouts/failures return a
+  failing process status. Full expanded Debug and sanitizer verification pending.
+
+## 2026-10-30 — Expanded checks and ROM runner startup correction
+
+- Expanded Debug, SDL + trace ASan/UBSan and headless CTests initially reported
+  35/35, 35/35 and (headless run in progress) respectively. Inspection revealed
+  a runner issue: blargg writes DE B0 61 before setting status 80, so these
+  initial new DMG_Sound CTest passes could accept initial RAM zero too early.
+  They are superseded by corrected-runner results below, not counted as ROM
+  verification. The independent full-duration headless ROM runs above remain
+  valid; their terminal results were collected after ten million instructions.
+- Corrected the runner to require signed status 80 before accepting any terminal
+  result. Existing CTests and the focused APU_Wave_Tests passed in the initial
+  expanded runs; all configurations are being rebuilt/rerun with this correction.
+- Independently reran all 11 cpu_instrs singles, instr_timing and three
+  mem_timing singles: **15/15 passed**, using full-duration headless execution.
+  Logs: /tmp/gb-wave-results/cpu-timing/.
+- Updated AUDIO.md with per-ROM before/after results, exact DMG wave behavior,
+  reference links, physical-unit caveats and the CGB-only scope of SameSuite's
+  PCM hardware checks. Updated MBC1.md to distinguish its historical 9/12 result
+  from the subsequent wave fix. No physical-console or SameSuite execution is
+  claimed. Final corrected CTest results and diff checks pending.
+
+## 2026-10-30 — Final active-wave regression results
+
+- With the corrected runner requiring signed running status 80, freshly rebuilt
+  and reran the full SDL + trace Debug suite: **35/35 passed** (all original
+  22 tests, the focused wave test and twelve sound ROM tests).
+- Rebuilt/reran SDL + trace ASan/UBSan: **35/35 passed**, no sanitizer diagnostics.
+  ASAN_OPTIONS=detect_leaks=0 retains the earlier environment's LeakSanitizer
+  workaround; leak checking is not claimed. Existing CPU conversion warnings
+  remain; no new wave-related compiler warnings were emitted.
+- Rebuilt/reran headless, trace-disabled Debug: **28/28 passed** (the original
+  15 tests plus wave coverage and twelve sound singles).
+- Every dmg_sound single passed with status **00**, signature **DE B0 61**:
+  01-registers; 02-len ctr; 03-trigger; 04-sweep; 05-sweep details;
+  06-overflow on trigger; 07-len sweep period sync; 08-len ctr during power;
+  09-wave read while on; 10-wave trigger while on; 11-regs after power;
+  12-wave write while on. The previous nine passes are preserved and the
+  previous three failures are fixed. AUDIO.md contains the per-ROM comparison.
+- Verified the ROM runner itself against temporary synthetic cartridges: signed
+  running-to-failure returns exit 1; signed running-to-pass returns exit 0;
+  signature plus startup zero without running returns exit 1 on STOP.
+  Logs/fixtures: /tmp/gb-wave-results/runner-fixtures/.
+- The independent CPU/timing ROM rerun remains **15/15 passed** as recorded
+  above. No external ROMs were modified. No tests were removed or disabled.
+- git diff --check passed. Complete logs are in /tmp/gb-wave-results/;
+  ctest-debug.log, ctest-sanitize.log and ctest-headless.log are the corrected
+  final CTest runs. Earlier unrelated workspace edits were preserved.
+- Limits: common deterministic DMG-B corruption behavior only; physical unit
+  variations, CGB/AGB modes, inactive CH3 bus glitches and simultaneous bus/clock
+  races remain outside this fix. SameSuite sources were consulted, not run;
+  PCM tests verify CGB hardware, not DMG windows. No physical audio fidelity,
+  new gameplay or listening verification is claimed.
+
+## 2026-10-30 — Mortal Kombat investigation: reproduction and tracing
+
+- Found roms/Mortal_Kombat.gb, 262144 bytes, SHA-256
+  84686cd3c77c533926fc2c56783613ecc5781de1bff7065e00112a69d17a5e69.
+  Header uses supported MBC1 type 01, 256 KiB ROM, no cartridge RAM.
+- Unmodified core ran ten million steps and remained RUNNING around 0E24/0E28;
+  no STOP/lock. ROM disassembly shows a polling loop on WRAM DFC1 after writing
+  SC=81. Serial vector 0058 jumps to 0276, whose handler reads SB and sets DFC1.
+  The bus currently only prints SB on SC=81; it never shifts bits, clears SC
+  start, or requests the serial interrupt. This is evidence for a missing
+  serial-completion condition, not a mapper-capacity problem.
+- Added opt-in headless bounded CPU snapshots (up to 4096 + final snapshot),
+  start/stride/count controls and bounded --steps. Records requested CPU/IRQ/PPU
+  and MBC1 bank fields plus timer/serial registers and framebuffer hashes.
+  Frame totals/hash-change totals help separate CPU polling from display stalls.
+  Initial diagnostic build succeeded. Baseline/focused traces are in
+  /tmp/gb-mk-results/. Exact trace analysis, regression tests and fix pending.
+
+## 2026-10-30 — Mortal Kombat diagnosis and serial completion fix
+
+- Focused pre-fix trace at step 4,000,000 shows repeated valid instructions:
+  0E24 FA C1 DF (LD A,[DFC1]); 0E27 A7 (AND A); 0E28 CA 24 0E
+  (JP Z,0E24). SC remains 81, SB AA, IME=1, IE=0D, IF=00, SP=DFF0,
+  bank=1. LY/STAT/DIV advance and bank 2 sound-handler excursions occur.
+  Final baseline: 115240128 T-cycles, 1636 frames, 37 changed frames,
+  framebuffer hash 45652487. CPU polls; it is not HALTed/STOPped/locked.
+- Serial ISR at 0058 jumps to 0276: PUSH AF; LD A,[FF01]; LD [DFC0],A;
+  LD A,1; LD [DFC1],A; POP AF; RETI. No serial IF request ever reaches it
+  because the old FF02 handler is only an immediate stdout byte print.
+- Compared Pan Docs Serial Data Transfer with SameBoy Core/timing.c
+  GB_serial_master_edge: both complete eight bit shifts, clear SC.7, request
+  IF.3 and shift in ones without a cable. No installed reference emulator was
+  found; this is a source/hardware-reference comparison, not a side-by-side
+  game execution comparison.
+  Sources: https://gbdev.io/pandocs/Serial_Data_Transfer_(Link_Cable).html
+  and https://github.com/LIJI32/SameBoy/blob/master/Core/timing.c .
+- Added Serial_Tests, first running its synthetic IRQ-flag polling program
+  against the old core: it failed the progress marker assertion as expected
+  (/tmp/gb-mk-results/serial-red.log). The test does not need retail ROM data.
+- Implemented disconnected DMG serial peripheral: 512 T-cycles per bit,
+  partial SB shifting, eight-bit completion, SC masks/cancel/restart/external
+  wait, IF.3 regardless of IME/IE. Uses memory_tick without extra CPU time;
+  keeps the test-ROM stdout sink at completion instead of transfer start.
+  Polling, HALT/IME on/off, STOP, DMA, byte timing, no repeated completion,
+  external waiting, cancellation, unrelated IF bits and batching tests pass.
+- Core CPU/timer/PPU/mapper logic is unchanged. Serial startup currently waits
+  one full bit period; free-running divider alignment and link hardware races
+  are not modeled. No cable peer or CGB fast serial support is claimed.
+  Game post-fix analysis and full regression runs are pending.
+
+## 2026-10-30 — Mortal Kombat progress and main regressions verified
+
+- Post-fix ten-million-step run: CPU remains RUNNING, reaches multiple screen
+  states, 1524 VBlanks and 69 changed-frame hashes (baseline: 1636 and 37).
+  A temporary observer counted 410 visits to the serial vector and no HALT,
+  STOP or lock states in that run. Final framebuffer hash is 5B93C0C8.
+- Exported diagnostic framebuffer captures using a /tmp observer; visually
+  inspected frame 600 (MIDWAY PRESENTS) and frame 900 (MORTAL KOMBAT title).
+  This verifies departure from the reported splash in the actual provided ROM,
+  not merely a changed hash. Captures/logs: /tmp/gb-mk-results/mk-*.png and
+  probe.log. This was not manual interactive combat or full-game completion.
+- Full SDL + trace Debug CTest: **36/36 passed**, including all twelve sound
+  singles and the new serial regression. Full SDL + trace ASan/UBSan CTest:
+  **36/36 passed**, no sanitizer diagnostics, ASAN_OPTIONS=detect_leaks=0 as in
+  prior runs. Existing CPU conversion warnings remain.
+- All 11 cpu_instrs singles, instr_timing and three mem_timing singles were
+  rerun with completed serial output: **15/15 passed**, requiring process
+  success, serial Passed and no Failed. Logs: /tmp/gb-mk-results/cpu-timing/.
+- Updated README with serial behavior, tracing flags, meanings and bounds,
+  diagnosis and remaining timing uncertainty. Headless CTest and additional
+  SDL/CLI/save checks are being finalized; their results are not claimed here.
+
+## 2026-10-30 — Mortal Kombat final preservation checks
+
+- Headless, graphics-trace-disabled Debug CTest: **29/29 passed**. All existing
+  tests remain enabled. SDL + trace suites above passed **36/36** in Debug and
+  ASan/UBSan. All twelve sound tests report status 00 and DE B0 61:
+  01-registers; 02-len ctr; 03-trigger; 04-sweep; 05-sweep details;
+  06-overflow on trigger; 07-len sweep period sync; 08-len ctr during power;
+  09-wave read while on; 10-wave trigger while on; 11-regs after power;
+  12-wave write while on. The previous 15/15 CPU/timing rerun is recorded above.
+- SDL dummy video/software renderer/audio runs exited successfully with audio
+  enabled: Tetris presented 120 frames; Mortal Kombat presented 950 frames.
+  This checks launch/render/audio integration, not interactive play or listening.
+- Rechecked SDL MBC1 battery saves using an isolated synthetic type-03 ROM and
+  /tmp save: Debug loaded byte 31 and persisted 32; ASan/UBSan loaded 32 and
+  persisted 33. Both presented two frames. Existing MBC1_Tests also passed
+  save roundtrips/invalid-save preservation. No user save files were touched.
+- Diagnostic CLI checks passed: start/stride/count produce three selected
+  snapshots plus one final snapshot; traced/untraced 200-step CPU states match;
+  zero counts/stride/steps, negative steps, missing values, excessive count
+  (4097), and unknown options fail cleanly. Retained README's --trace spelling
+  as an alias of --cpu-trace. CPU tracing requires no graphics-trace build flag.
+- git diff --check passed. Updated standard build/ binaries are being rebuilt
+  for the user's next run. Earlier unrelated workspace changes remain intact.
+- Remaining uncertainty: no physical console or separate emulator executable
+  was run, and no interactive Tetris/Mortal Kombat combat or audio listening
+  session was performed. Hardware behavior was compared with Pan Docs and
+  SameBoy source. Serial divider startup phase, active-transfer register races,
+  a connected cable, external clock input, and CGB fast serial are unsupported.
+  Existing PPU/analog/STOP approximations remain. No game-specific branch,
+  mapper exception, forced interrupt or WRAM flag patch was introduced.
+
+## 2026-10-30 — Workspace build ready
+
+- Standard build/ was initially configured headless: rebuilt it and reran
+  **29/29 CTests successfully**. Enabled its SDL option and rebuilt again so
+  build/gb_sdl includes the serial fix instead of leaving an older executable.
+  The resulting SDL, trace-disabled workspace suite passed **34/34**.
+- The separate SDL + trace configurations retain the **36/36** Debug and
+  ASan/UBSan results above; the headless configuration passed **29/29**.
+  Logs: /tmp/gb-mk-results/ctest-workspace.log and the other ctest-*.log files.
+  No requested verification remains outstanding. git diff --check passed.
